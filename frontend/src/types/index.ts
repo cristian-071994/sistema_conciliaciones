@@ -1,0 +1,78 @@
+export type UserRole = "COINTRA" | "CLIENTE" | "TERCERO";
+
+export interface User {
+  id: number;
+  nombre: string;
+  email: string;
+  rol: UserRole;
+  cliente_id?: number | null;
+  tercero_id?: number | null;
+  activo: boolean;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface Operacion {
+  id: number;
+  cliente_id: number;
+  tercero_id: number;
+  nombre: string;
+  porcentaje_rentabilidad: number;
+  activa: boolean;
+}
+
+export interface Conciliacion {
+  id: number;
+  operacion_id: number;
+  nombre: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  estado: "BORRADOR" | "EN_REVISION" | "APROBADA" | "CERRADA";
+  created_by: number;
+  created_at: string;
+}
+
+export interface Item {
+  id: number;
+  conciliacion_id: number;
+  tipo: "VIAJE" | "PEAJE" | "HORA_EXTRA" | "VIAJE_EXTRA" | "ESTIBADA" | "CONDUCTOR_RELEVO" | "OTRO";
+  estado: "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO";
+  fecha_servicio: string;
+  origen: string | null;
+  destino: string | null;
+  placa: string | null;
+  conductor: string | null;
+  tarifa_tercero: number | null;
+  tarifa_cliente: number | null;
+  rentabilidad: number | null;
+  manifiesto_avansat_id: string | null;
+  manifiesto_numero: string | null;
+  cargado_por: string;
+  descripcion: string | null;
+  created_by: number;
+  created_at: string;
+}
+
+export interface Viaje {
+  id: number;
+  operacion_id: number;
+  tercero_id: number;
+  fecha_servicio: string;
+  origen: string;
+  destino: string;
+  placa: string;
+  conductor: string;
+  tarifa_tercero: number | null;
+  tarifa_cliente: number | null;
+  rentabilidad: number | null;
+  manifiesto_avansat_id: string | null;
+  manifiesto_numero: string | null;
+  descripcion: string | null;
+  cargado_por: string;
+  conciliado: boolean;
+  created_by: number;
+  created_at: string;
+}
