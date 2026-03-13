@@ -60,8 +60,9 @@ def create_conciliacion(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
+    # Crear conciliaciones: COINTRA_ADMIN, COINTRA_USER (rol COINTRA)
     if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede crear conciliaciones")
+        raise HTTPException(status_code=403, detail="Solo usuarios Cointra pueden crear conciliaciones")
 
     operacion = db.get(Operacion, payload.operacion_id)
     if not operacion:

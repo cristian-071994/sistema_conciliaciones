@@ -30,8 +30,17 @@ def create_viaje(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    if user.rol not in [UserRole.COINTRA, UserRole.TERCERO]:
-        raise HTTPException(status_code=403, detail="Solo Cointra o Tercero puede cargar viajes")
+    # Crear viajes: COINTRA_ADMIN, COINTRA_USER, TERCERO
+    if user.rol == UserRole.TERCERO:
+        allowed = True
+    elif user.rol == UserRole.COINTRA:
+        # Cualquier sub_rol de Cointra puede crear viajes
+        allowed = True
+    else:
+        allowed = False
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="No tiene permisos para crear viajes")
 
     operacion = db.get(Operacion, payload.operacion_id)
     if not operacion:
@@ -91,8 +100,16 @@ async def bulk_upload_viajes(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    if user.rol not in [UserRole.COINTRA, UserRole.TERCERO]:
-        raise HTTPException(status_code=403, detail="Solo Cointra o Tercero puede cargar viajes")
+    # Carga masiva de viajes: mismos permisos que crear viaje
+    if user.rol == UserRole.TERCERO:
+        allowed = True
+    elif user.rol == UserRole.COINTRA:
+        allowed = True
+    else:
+        allowed = False
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="No tiene permisos para cargar viajes")
 
     operacion = db.get(Operacion, operacion_id)
     if not operacion:

@@ -1,4 +1,4 @@
-import { Conciliacion, Item, LoginResponse, Operacion, User, Viaje } from "../types";
+import { Conciliacion, Item, LoginResponse, Operacion, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -92,4 +92,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ viaje_ids: viajeIds }),
     }),
+  vehiculos: () => request<Vehiculo[]>("/vehiculos"),
+  crearVehiculo: (payload: { placa: string; tipo_vehiculo_id: number; propietario?: string }) =>
+    request<Vehiculo>("/vehiculos", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  eliminarVehiculo: (id: number) =>
+    request<{ ok: boolean }>(`/vehiculos/${id}`, {
+      method: "DELETE",
+    }),
+  tiposVehiculo: () => request<TipoVehiculo[]>("/vehiculos/tipos-vehiculo"),
 };

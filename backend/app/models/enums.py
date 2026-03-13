@@ -7,6 +7,11 @@ class UserRole(str, Enum):
     TERCERO = "TERCERO"
 
 
+class CointraSubRol(str, Enum):
+    COINTRA_ADMIN = "COINTRA_ADMIN"
+    COINTRA_USER = "COINTRA_USER"
+
+
 class ConciliacionEstado(str, Enum):
     BORRADOR = "BORRADOR"
     EN_REVISION = "EN_REVISION"

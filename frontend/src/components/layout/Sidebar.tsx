@@ -11,12 +11,14 @@ type NavItem = {
   path: string;
 };
 
-function getNavItemsForRole(rol: User["rol"]): NavItem[] {
+function getNavItemsForRole(user: User): NavItem[] {
+  const { rol } = user;
   if (rol === "COINTRA") {
     return [
       { key: "dashboard", label: "Dashboard", path: "/dashboard" },
       { key: "operaciones", label: "Operaciones", path: "/operaciones" },
       { key: "conciliaciones", label: "Conciliaciones", path: "/conciliaciones" },
+      { key: "vehiculos", label: "Vehículos", path: "/vehiculos" },
       { key: "clientes", label: "Clientes", path: "/clientes" },
       { key: "terceros", label: "Terceros", path: "/terceros" },
       { key: "usuarios", label: "Usuarios", path: "/usuarios" },
@@ -33,11 +35,12 @@ function getNavItemsForRole(rol: User["rol"]): NavItem[] {
   return [
     { key: "dashboard", label: "Dashboard", path: "/dashboard" },
     { key: "mis-conciliaciones", label: "Mis Conciliaciones", path: "/conciliaciones" },
+    { key: "vehiculos", label: "Vehículos", path: "/vehiculos" },
   ];
 }
 
 export function Sidebar({ user }: SidebarProps) {
-  const items = getNavItemsForRole(user.rol);
+  const items = getNavItemsForRole(user);
   const location = useLocation();
   const navigate = useNavigate();
 

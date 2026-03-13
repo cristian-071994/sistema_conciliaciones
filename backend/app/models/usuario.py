@@ -2,7 +2,7 @@ from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import UserRole
+from app.models.enums import CointraSubRol, UserRole
 
 
 class Usuario(Base):
@@ -13,6 +13,7 @@ class Usuario(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     rol: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
+    sub_rol: Mapped[CointraSubRol | None] = mapped_column(Enum(CointraSubRol), nullable=True)
     cliente_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clientes.id"), nullable=True)
     tercero_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("terceros.id"), nullable=True)
     activo: Mapped[bool] = mapped_column(Boolean, default=True)

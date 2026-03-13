@@ -8,6 +8,8 @@ from app.models.operacion import Operacion
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
 from app.models.viaje import Viaje
+from app.models.tipo_vehiculo import TipoVehiculo
+from app.models.vehiculo import Vehiculo
 
 __all__ = [
     "Cliente",
@@ -20,4 +22,6 @@ __all__ = [
     "HistorialCambio",
     "Notificacion",
     "Viaje",
+    "TipoVehiculo",
+    "Vehiculo",
 ]

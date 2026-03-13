@@ -37,6 +37,28 @@ Documentación completa en:
 
 ---
 
+## SUB-ROLES DE COINTRA
+
+El rol COINTRA tiene dos sub-roles definidos en la columna
+sub_rol de la tabla usuarios:
+
+- COINTRA_ADMIN: acceso total. Puede crear, editar y eliminar
+  cualquier registro del sistema. Gestiona usuarios, operaciones,
+  clientes y terceros.
+
+- COINTRA_USER: puede crear viajes, conciliaciones y vehículos.
+  Puede editar tarifas de conciliaciones en estado BORRADOR.
+  NO puede eliminar ni editar registros ya guardados.
+  NO puede gestionar usuarios, operaciones, clientes ni terceros.
+
+El TERCERO puede crear vehículos (son sus propios vehículos)
+pero no puede editarlos ni eliminarlos.
+
+En el backend, verificar sub_rol además del rol en todos
+los endpoints de edición y eliminación.
+
+---
+
 ## REGLA DE NEGOCIO CENTRAL — NUNCA IGNORAR
 
 Tarifa Tercero = Tarifa Cliente × (1 - % Rentabilidad / 100)

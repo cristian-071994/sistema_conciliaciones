@@ -40,6 +40,7 @@ def update_operacion_rentabilidad(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
+    # Gestionar operaciones: solo Cointra (ADMIN/USER) a nivel de backend
     if user.rol != UserRole.COINTRA:
         raise HTTPException(status_code=403, detail="Solo Cointra puede configurar rentabilidad")
 

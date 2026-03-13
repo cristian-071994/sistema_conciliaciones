@@ -8,6 +8,7 @@ import { OperacionesPage } from "./pages/OperacionesPage";
 import { ClientesPage } from "./pages/ClientesPage";
 import { TercerosPage } from "./pages/TercerosPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
+import { VehiculosPage } from "./pages/VehiculosPage";
 import { api } from "./services/api";
 import { Conciliacion, Operacion, User } from "./types";
 
@@ -82,6 +83,7 @@ export function App() {
           }
         />
         <Route path="/operaciones" element={<OperacionesPage user={user} />} />
+        <Route path="/vehiculos" element={<VehiculosPage user={user} />} />
         <Route path="/clientes" element={<ClientesPage user={user} />} />
         <Route path="/terceros" element={<TercerosPage user={user} />} />
         <Route path="/usuarios" element={<UsuariosPage user={user} />} />

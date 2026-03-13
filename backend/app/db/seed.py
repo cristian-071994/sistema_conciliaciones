@@ -2,10 +2,11 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.cliente import Cliente
-from app.models.enums import UserRole
+from app.models.enums import CointraSubRol, UserRole
 from app.models.operacion import Operacion
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
+from app.models.tipo_vehiculo import TipoVehiculo
 
 
 def seed_data(db: Session) -> None:
@@ -27,12 +28,23 @@ def seed_data(db: Session) -> None:
     db.add(operacion)
     db.flush()
 
+    # Tipos de vehiculo iniciales
+    tipos = [
+        TipoVehiculo(nombre="Sencillo", activo=True),
+        TipoVehiculo(nombre="Doble Troque", activo=True),
+        TipoVehiculo(nombre="Tractomula", activo=True),
+        TipoVehiculo(nombre="Mini Mula", activo=True),
+    ]
+    db.add_all(tipos)
+    db.flush()
+
     users = [
         Usuario(
             nombre="Admin Cointra",
             email="cointra@cointra.com",
             password_hash=get_password_hash("cointra123"),
             rol=UserRole.COINTRA,
+            sub_rol=CointraSubRol.COINTRA_ADMIN,
             activo=True,
         ),
         Usuario(

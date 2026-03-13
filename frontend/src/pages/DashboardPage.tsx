@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../services/api";
-import { Conciliacion, Item, Operacion, User, Viaje } from "../types";
+import { Conciliacion, Item, Operacion, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
 
 interface Props {
   user: User;
@@ -14,6 +14,9 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConciliaciones }: Props) {
   const [activeModule, setActiveModule] = useState<"viajes" | "conciliaciones">("viajes");
   const [viajes, setViajes] = useState<Viaje[]>([]);
+  const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
+  const [tiposVehiculo, setTiposVehiculo] = useState<TipoVehiculo[]>([]);
+  const [selectedPlaca, setSelectedPlaca] = useState<string>("");
   const [selectedConciliacion, setSelectedConciliacion] = useState<number | null>(null);
   const [pendingViajes, setPendingViajes] = useState<Viaje[]>([]);
   const [selectedViajeIds, setSelectedViajeIds] = useState<number[]>([]);
@@ -40,6 +43,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       setViajes(data);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  async function loadVehiculosData() {
+    try {
+      const [vs, ts] = await Promise.all([api.vehiculos(), api.tiposVehiculo()]);
+      setVehiculos(vs);
+      setTiposVehiculo(ts);
+    } catch {
+      // silencioso en UI de viajes; se puede gestionar mejor en pagina de vehiculos
     }
   }
 
@@ -70,6 +83,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
     await api.crearConciliacion({ operacion_id, nombre, fecha_inicio, fecha_fin });
     await onRefreshConciliaciones();
+    setSelectedConciliacion(null);
+    setItems([]);
+    setPendingViajes([]);
+    setSelectedViajeIds([]);
   }
 
   async function createViaje(formData: FormData) {
@@ -118,6 +135,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   useEffect(() => {
     if (activeModule === "viajes") {
       void loadViajes();
+      void loadVehiculosData();
     }
   }, [activeModule]);
 
@@ -239,11 +257,33 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                       Placa
                     </label>
-                    <input
+                    <select
                       name="placa"
                       required
-                      className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    />
+                      value={selectedPlaca}
+                      onChange={(e) => setSelectedPlaca(e.target.value)}
+                      className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    >
+                      <option value="">Seleccione un vehículo...</option>
+                      {vehiculos.map((v) => (
+                        <option key={v.id} value={v.placa}>
+                          {v.placa}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedPlaca && (
+                      <p className="mt-1 text-xs text-neutral">
+                        Tipo de vehículo:{" "}
+                        <span className="font-medium text-slate-900">
+                          {(() => {
+                            const vehiculo = vehiculos.find((v) => v.placa === selectedPlaca);
+                            if (!vehiculo) return "Sin información";
+                            const tipo = tiposVehiculo.find((t) => t.id === vehiculo.tipo_vehiculo_id);
+                            return tipo?.nombre ?? "Sin información";
+                          })()}
+                        </span>
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
@@ -455,7 +495,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{c.nombre}</td>
                         <td className="px-3 py-2">
                           <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                            {c.estado}
+                            {c.estado.toUpperCase()}
                           </span>
                         </td>
                         <td className="px-3 py-2">
@@ -480,70 +520,79 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
       {selected && (
         <section className="space-y-6 rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+          {user.rol === "COINTRA" && pendingViajes.length > 0 && (
+            <>
+              <div>
+                <h3 className="mb-1 text-sm font-semibold text-slate-900">
+                  Viajes pendientes por conciliar
+                </h3>
+                <p className="text-xs text-neutral">
+                  {pendingViajes.length} viajes pendientes en la operación
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-neutral">
+                  Selecciona los viajes que deseas adjuntar a esta conciliación.
+                </span>
+                <button
+                  type="button"
+                  onClick={attachPendingViajes}
+                  disabled={selectedViajeIds.length === 0}
+                  className="inline-flex items-center rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition enabled:hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  Adjuntar seleccionados ({selectedViajeIds.length})
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-neutral">
+                      <th className="border-b border-border px-3 py-2 text-left" />
+                      <th className="border-b border-border px-3 py-2 text-left">ID</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Fecha</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Ruta</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Placa</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingViajes.map((v) => (
+                      <tr key={v.id} className="border-b border-border last:border-0">
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedViajeIds.includes(v.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedViajeIds((prev) => [...prev, v.id]);
+                              } else {
+                                setSelectedViajeIds((prev) => prev.filter((id) => id !== v.id));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                          />
+                        </td>
+                        <td className="px-3 py-2">{v.id}</td>
+                        <td className="px-3 py-2">{v.fecha_servicio}</td>
+                        <td className="px-3 py-2">
+                          {v.origen} - {v.destino}
+                        </td>
+                        <td className="px-3 py-2">{v.placa}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
           <div>
-            <h3 className="mb-1 text-sm font-semibold text-slate-900">Viajes pendientes por conciliar</h3>
+            <h3 className="mt-4 text-sm font-semibold text-slate-900">
+              Viajes conciliados en esta conciliación
+            </h3>
             <p className="text-xs text-neutral">
-              {pendingViajes.length} viajes pendientes en la operación
+              Listado de ítems asociados a la conciliación #{selected.id}.
             </p>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-neutral">
-              Selecciona los viajes que deseas adjuntar a esta conciliación.
-            </span>
-            {user.rol === "COINTRA" && (
-              <button
-                type="button"
-                onClick={attachPendingViajes}
-                disabled={selectedViajeIds.length === 0}
-                className="inline-flex items-center rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition enabled:hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Adjuntar seleccionados ({selectedViajeIds.length})
-              </button>
-            )}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-neutral">
-                  <th className="border-b border-border px-3 py-2 text-left" />
-                  <th className="border-b border-border px-3 py-2 text-left">ID</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Fecha</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Ruta</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Placa</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingViajes.map((v) => (
-                  <tr key={v.id} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedViajeIds.includes(v.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedViajeIds((prev) => [...prev, v.id]);
-                          } else {
-                            setSelectedViajeIds((prev) => prev.filter((id) => id !== v.id));
-                          }
-                        }}
-                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
-                      />
-                    </td>
-                    <td className="px-3 py-2">{v.id}</td>
-                    <td className="px-3 py-2">{v.fecha_servicio}</td>
-                    <td className="px-3 py-2">
-                      {v.origen} - {v.destino}
-                    </td>
-                    <td className="px-3 py-2">{v.placa}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <h3 className="mt-4 text-sm font-semibold text-slate-900">
-            Items de conciliación #{selected.id}
-          </h3>
           <form
             className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[repeat(auto-fit,minmax(160px,1fr))]"
             onSubmit={async (e: FormEvent<HTMLFormElement>) => {
@@ -656,7 +705,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{item.tipo}</td>
                         <td className="px-3 py-2">
                           <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                            {item.estado}
+                            {item.estado.toUpperCase()}
                           </span>
                         </td>
                         <td className="px-3 py-2">{item.fecha_servicio}</td>

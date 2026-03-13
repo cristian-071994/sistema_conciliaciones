@@ -1,10 +1,13 @@
 export type UserRole = "COINTRA" | "CLIENTE" | "TERCERO";
 
+export type CointraSubRol = "COINTRA_ADMIN" | "COINTRA_USER";
+
 export interface User {
   id: number;
   nombre: string;
   email: string;
   rol: UserRole;
+  sub_rol?: CointraSubRol | null;
   cliente_id?: number | null;
   tercero_id?: number | null;
   activo: boolean;
@@ -77,4 +80,19 @@ export interface Viaje {
   conciliado: boolean;
   created_by: number;
   created_at: string;
+}
+
+export interface TipoVehiculo {
+  id: number;
+  nombre: string;
+  activo: boolean;
+}
+
+export interface Vehiculo {
+  id: number;
+  placa: string;
+  tipo_vehiculo_id: number;
+  propietario: string | null;
+  activo: boolean;
+  created_by: number;
 }
