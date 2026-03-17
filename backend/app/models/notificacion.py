@@ -19,5 +19,6 @@ class Notificacion(Base):
     email_enviado: Mapped[bool] = mapped_column(Boolean, default=False)
     email_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    conciliacion_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliaciones.id", ondelete="SET NULL"), nullable=True)
 
     usuario = relationship("Usuario")

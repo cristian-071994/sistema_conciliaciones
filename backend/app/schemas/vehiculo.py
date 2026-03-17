@@ -16,13 +16,14 @@ class TipoVehiculoOut(ORMModel):
 class VehiculoCreate(BaseModel):
     placa: str
     tipo_vehiculo_id: int
-    propietario: str | None = None
+    tercero_id: int
 
 
 class VehiculoOut(ORMModel):
     id: int
     placa: str
     tipo_vehiculo_id: int
+    tercero_id: int | None
     propietario: str | None
     activo: bool
     created_by: int

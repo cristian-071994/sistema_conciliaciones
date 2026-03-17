@@ -26,6 +26,8 @@ class Viaje(Base):
     descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
     cargado_por: Mapped[str] = mapped_column(String(20), nullable=False)
     conciliado: Mapped[bool] = mapped_column(Boolean, default=False)
+    estado_conciliacion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

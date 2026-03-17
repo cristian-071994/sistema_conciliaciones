@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
-import type { TipoVehiculo, User, Vehiculo } from "../types";
+import type { Tercero, TipoVehiculo, User, Vehiculo } from "../types";
 
 interface Props {
   user: User;
@@ -23,24 +24,37 @@ function toSpanishError(error: unknown): string {
 export function VehiculosPage({ user }: Props) {
   const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
   const [tipos, setTipos] = useState<TipoVehiculo[]>([]);
+  const [terceros, setTerceros] = useState<Tercero[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [vehiculoForm, setVehiculoForm] = useState({
     placa: "",
     tipo_vehiculo_id: "",
-    propietario: "",
+    tercero_id: "",
   });
   const [tipoNombre, setTipoNombre] = useState("");
+  const [confirmModal, setConfirmModal] = useState<
+    | { type: "inactivarVehiculo" | "reactivarVehiculo"; id: number }
+    | { type: "inactivarTipo" | "reactivarTipo"; id: number }
+    | null
+  >(null);
 
   const isCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const tercerosDisponibles = useMemo(() => {
+    if (user.rol === "TERCERO" && user.tercero_id) {
+      return terceros.filter((t) => t.id === user.tercero_id);
+    }
+    return terceros;
+  }, [terceros, user.rol, user.tercero_id]);
 
   async function loadData() {
     setLoading(true);
     setError("");
     try {
-      const [vs, ts] = await Promise.all([api.vehiculos(), api.tiposVehiculo()]);
+      const [vs, ts, ters] = await Promise.all([api.vehiculos(), api.tiposVehiculo(), api.terceros()]);
       setVehiculos(vs);
       setTipos(ts);
+      setTerceros(ters.filter((t) => t.activo));
     } catch (e) {
       setError(toSpanishError(e));
     } finally {
@@ -52,21 +66,27 @@ export function VehiculosPage({ user }: Props) {
     void loadData();
   }, []);
 
+  useEffect(() => {
+    if (!vehiculoForm.tercero_id && tercerosDisponibles.length === 1) {
+      setVehiculoForm((prev) => ({ ...prev, tercero_id: String(tercerosDisponibles[0].id) }));
+    }
+  }, [tercerosDisponibles, vehiculoForm.tercero_id]);
+
   async function handleCreateVehiculo(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     const placa = vehiculoForm.placa.trim().toUpperCase();
     const tipo_vehiculo_id = Number(vehiculoForm.tipo_vehiculo_id);
-    const propietario = vehiculoForm.propietario.trim() || undefined;
+    const tercero_id = Number(vehiculoForm.tercero_id);
 
-    if (!placa || !tipo_vehiculo_id) {
-      setError("Debes diligenciar placa y tipo de vehiculo");
+    if (!placa || !tipo_vehiculo_id || !tercero_id) {
+      setError("Debes diligenciar placa, tipo de vehiculo y tercero propietario");
       return;
     }
 
     try {
-      await api.crearVehiculo({ placa, tipo_vehiculo_id, propietario });
-      setVehiculoForm({ placa: "", tipo_vehiculo_id: "", propietario: "" });
+      await api.crearVehiculo({ placa, tipo_vehiculo_id, tercero_id });
+      setVehiculoForm({ placa: "", tipo_vehiculo_id: "", tercero_id: "" });
       await loadData();
     } catch (err) {
       setError(toSpanishError(err));
@@ -87,17 +107,23 @@ export function VehiculosPage({ user }: Props) {
     }
   }
 
-  async function handleDeleteVehiculo(id: number) {
-    if (!isCointraAdmin) return;
-    // Confirmación mínima en el cliente
-    // eslint-disable-next-line no-alert
-    const ok = window.confirm("¿Eliminar este vehículo? Esta acción no puede deshacerse.");
-    if (!ok) return;
-    await api.eliminarVehiculo(id);
+  async function onConfirmAction() {
+    if (!confirmModal || !isCointraAdmin) return;
+    if (confirmModal.type === "inactivarVehiculo") {
+      await api.eliminarVehiculo(confirmModal.id);
+    } else if (confirmModal.type === "reactivarVehiculo") {
+      await api.reactivarVehiculo(confirmModal.id);
+    } else if (confirmModal.type === "inactivarTipo") {
+      await api.eliminarTipoVehiculo(confirmModal.id);
+    } else {
+      await api.reactivarTipoVehiculo(confirmModal.id);
+    }
+    setConfirmModal(null);
     await loadData();
   }
 
   const tipoNombreById = new Map(tipos.map((t) => [t.id, t.nombre]));
+  const terceroNombreById = new Map(terceros.map((t) => [t.id, t.nombre]));
 
   return (
     <div className="space-y-6">
@@ -147,17 +173,24 @@ export function VehiculosPage({ user }: Props) {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-              Propietario (opcional)
+              Tercero propietario
             </label>
-            <input
-              name="propietario"
-              value={vehiculoForm.propietario}
+            <select
+              name="tercero_id"
+              required
+              value={vehiculoForm.tercero_id}
               onChange={(e) =>
-                setVehiculoForm((prev) => ({ ...prev, propietario: e.target.value }))
+                setVehiculoForm((prev) => ({ ...prev, tercero_id: e.target.value }))
               }
-              placeholder="Nombre del propietario"
-              className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-            />
+              className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Seleccione...</option>
+              {tercerosDisponibles.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nombre}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex items-end">
             <button
@@ -195,7 +228,7 @@ export function VehiculosPage({ user }: Props) {
                   <tr key={v.id} className="border-b border-border last:border-0">
                     <td className="px-3 py-2">{v.placa}</td>
                     <td className="px-3 py-2">{tipoNombreById.get(v.tipo_vehiculo_id) || "-"}</td>
-                    <td className="px-3 py-2">{v.propietario || "-"}</td>
+                    <td className="px-3 py-2">{(v.tercero_id ? terceroNombreById.get(v.tercero_id) : null) || v.propietario || "-"}</td>
                     <td className="px-3 py-2">
                       <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
                         {v.activo ? "ACTIVO" : "INACTIVO"}
@@ -205,10 +238,19 @@ export function VehiculosPage({ user }: Props) {
                       <td className="px-3 py-2">
                         <button
                           type="button"
-                          onClick={() => void handleDeleteVehiculo(v.id)}
-                          className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                          onClick={() =>
+                            setConfirmModal({
+                              type: v.activo ? "inactivarVehiculo" : "reactivarVehiculo",
+                              id: v.id,
+                            })
+                          }
+                          className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                            v.activo
+                              ? "border-border bg-white text-slate-700 hover:bg-slate-50"
+                              : "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                          }`}
                         >
-                          Eliminar
+                          {v.activo ? "Inactivar" : "Reactivar"}
                         </button>
                       </td>
                     )}
@@ -256,6 +298,7 @@ export function VehiculosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">ID</th>
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
+                  <th className="border-b border-border px-3 py-2 text-left">Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -264,9 +307,31 @@ export function VehiculosPage({ user }: Props) {
                     <td className="px-3 py-2">{t.id}</td>
                     <td className="px-3 py-2">{t.nombre}</td>
                     <td className="px-3 py-2">
-                      <span className="inline-flex rounded-full bg-success/10 px-2.5 py-0.5 text-xs font-semibold text-success">
-                        ACTIVO
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                          t.activo ? "bg-success/10 text-success" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {t.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmModal({
+                            type: t.activo ? "inactivarTipo" : "reactivarTipo",
+                            id: t.id,
+                          })
+                        }
+                        className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                          t.activo
+                            ? "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
+                            : "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                        }`}
+                      >
+                        {t.activo ? "Inactivar" : "Reactivar"}
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -275,6 +340,32 @@ export function VehiculosPage({ user }: Props) {
           </div>
         </section>
       )}
+
+      <ActionModal
+        open={!!confirmModal}
+        title={
+          confirmModal?.type === "inactivarVehiculo"
+            ? `¿Inactivar vehículo #${confirmModal.id}?`
+            : confirmModal?.type === "reactivarVehiculo"
+              ? `¿Reactivar vehículo #${confirmModal.id}?`
+              : confirmModal?.type === "inactivarTipo"
+                ? `¿Inactivar tipo de vehículo #${confirmModal.id}?`
+                : `¿Reactivar tipo de vehículo #${confirmModal?.id}?`
+        }
+        description="Esta acción quedará registrada en el sistema."
+        confirmText={
+          confirmModal?.type === "inactivarVehiculo" || confirmModal?.type === "inactivarTipo"
+            ? "Inactivar"
+            : "Reactivar"
+        }
+        confirmTone={
+          confirmModal?.type === "inactivarVehiculo" || confirmModal?.type === "inactivarTipo"
+            ? "danger"
+            : "success"
+        }
+        onClose={() => setConfirmModal(null)}
+        onConfirm={onConfirmAction}
+      />
     </div>
   );
 }

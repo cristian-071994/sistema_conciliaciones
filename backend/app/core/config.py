@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     mail_from: str = ""
 
+    avansat_enabled: bool = False
+    avansat_url: str = "https://oet-avansat5.intrared.net:8083/ap/interf/app/APIAvansat/v1/index.php"
+    avansat_auth_header: str = ""
+    avansat_aplicacion: str = "sate_cointr"
+    avansat_type: str = "operacionnacional"
+    avansat_user: str = ""
+    avansat_pass: str = ""
+    avansat_verify_ssl: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

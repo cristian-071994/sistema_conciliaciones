@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import ALGORITHM
 from app.db.session import get_db
-from app.models.enums import UserRole
+from app.models.enums import CointraSubRol, UserRole
 from app.models.usuario import Usuario
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -39,3 +39,7 @@ def require_roles(*roles: UserRole):
         return user
 
     return validator
+
+
+def is_cointra_admin(user: Usuario) -> bool:
+    return user.rol == UserRole.COINTRA and user.sub_rol == CointraSubRol.COINTRA_ADMIN

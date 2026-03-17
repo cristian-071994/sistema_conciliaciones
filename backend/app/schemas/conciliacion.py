@@ -14,12 +14,21 @@ class ConciliacionCreate(BaseModel):
     fecha_fin: date
 
 
+class ConciliacionUpdate(BaseModel):
+    operacion_id: int | None = None
+    nombre: str | None = None
+    fecha_inicio: date | None = None
+    fecha_fin: date | None = None
+
+
 class ConciliacionUpdateEstado(BaseModel):
     estado: ConciliacionEstado
 
 
 class ConciliacionWorkflowAction(BaseModel):
     observacion: str | None = None
+    destinatario_email: str | None = None
+    mensaje: str | None = None
 
 
 class ConciliacionHistorialFilter(BaseModel):
@@ -36,8 +45,15 @@ class ConciliacionOut(ORMModel):
     fecha_inicio: date
     fecha_fin: date
     estado: ConciliacionEstado
+    activo: bool
+    enviada_facturacion: bool = False
     created_by: int
     created_at: datetime
+    creador_nombre: str | None = None
+    cliente_nombre: str | None = None
+    tercero_nombre: str | None = None
+    estado_actualizado_por_nombre: str | None = None
+    estado_actualizado_por_email: str | None = None
 
 
 class ConciliacionItemCreate(BaseModel):
@@ -75,6 +91,7 @@ class ClienteItemDecision(BaseModel):
 class ConciliacionItemOut(ORMModel):
     id: int
     conciliacion_id: int
+    viaje_id: int | None = None
     tipo: ItemTipo
     estado: ItemEstado
     fecha_servicio: date

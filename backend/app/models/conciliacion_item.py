@@ -12,6 +12,7 @@ class ConciliacionItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     conciliacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("conciliaciones.id"), nullable=False)
+    viaje_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("viajes.id"), nullable=True)
     tipo: Mapped[ItemTipo] = mapped_column(Enum(ItemTipo), nullable=False)
     estado: Mapped[ItemEstado] = mapped_column(Enum(ItemEstado), default=ItemEstado.PENDIENTE)
     fecha_servicio: Mapped[date] = mapped_column(Date, nullable=False)
@@ -30,5 +31,6 @@ class ConciliacionItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conciliacion = relationship("Conciliacion", back_populates="items")
+    viaje = relationship("Viaje")
     creador = relationship("Usuario", back_populates="items_creados")
     comentarios = relationship("Comentario", back_populates="item")

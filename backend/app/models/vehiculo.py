@@ -10,10 +10,12 @@ class Vehiculo(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     placa: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     tipo_vehiculo_id: Mapped[int] = mapped_column(Integer, ForeignKey("tipos_vehiculo.id"), nullable=False)
+    tercero_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("terceros.id"), nullable=True, index=True)
     propietario: Mapped[str | None] = mapped_column(String(255), nullable=True)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
 
     tipo = relationship("TipoVehiculo", back_populates="vehiculos")
+    tercero = relationship("Tercero")
     creador = relationship("Usuario")
 

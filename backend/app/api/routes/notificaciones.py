@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.conciliacion import Conciliacion
+from app.models.historial_cambio import HistorialCambio
 from app.models.notificacion import Notificacion
 from app.models.operacion import Operacion
 from app.models.enums import UserRole
@@ -103,7 +104,7 @@ def preview_correo(
 def send_correo_manual(
     payload: CorreoManualSendRequest,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(get_current_user),
 ):
     if not payload.destinatarios:
         raise HTTPException(status_code=400, detail="Debes enviar al menos un destinatario")
@@ -121,7 +122,9 @@ def send_correo_manual(
     if payload.mensaje and not payload.template_key:
         mensaje = payload.mensaje
 
-    result = send_manual_email(payload.destinatarios, subject=asunto, body=mensaje)
+    sender_signature = f"{user.nombre} <{user.email}>" if user.email else user.nombre
+    message_with_sender = f"{mensaje}\n\nEnviado por: {sender_signature}"
+    result = send_manual_email(payload.destinatarios, subject=asunto, body=message_with_sender)
     return CorreoSendOut(**result)
 
 
@@ -146,9 +149,30 @@ def destinatarios_sugeridos(
             raise HTTPException(status_code=403, detail="No autorizado")
         query = query.filter(Usuario.rol == UserRole.CLIENTE, Usuario.cliente_id == op.cliente_id)
     elif tipo == "respuesta_cliente":
-        # Cliente puede sugerir cointra
+        # Cliente responde preferiblemente al mismo usuario que envio la conciliacion a revision
         if user.rol != UserRole.CLIENTE:
             raise HTTPException(status_code=403, detail="No autorizado")
+        last_sender_log = (
+            db.query(HistorialCambio)
+            .filter(
+                HistorialCambio.conciliacion_id == conciliacion_id,
+                HistorialCambio.campo == "enviar_revision",
+            )
+            .order_by(HistorialCambio.id.desc())
+            .first()
+        )
+        if last_sender_log:
+            sender = db.get(Usuario, last_sender_log.usuario_id)
+            if sender and sender.activo and sender.email:
+                return [
+                    DestinatarioSugeridoOut(
+                        usuario_id=sender.id,
+                        nombre=sender.nombre,
+                        email=sender.email,
+                        rol=sender.rol.value,
+                    )
+                ]
+
         query = query.filter(Usuario.rol == UserRole.COINTRA)
     else:
         raise HTTPException(status_code=400, detail="Tipo no soportado")

@@ -16,6 +16,7 @@ class NotificacionOut(ORMModel):
     email_enviado: bool
     email_error: str | None
     created_at: datetime
+    conciliacion_id: int | None = None
 
 
 class NotificacionMarcarLeida(BaseModel):

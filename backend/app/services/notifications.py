@@ -8,7 +8,12 @@ from app.models.notificacion import Notificacion
 from app.models.usuario import Usuario
 
 
-def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str | None]:
+def _send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    attachments: list[dict[str, object]] | None = None,
+) -> tuple[bool, str | None]:
     if not settings.smtp_enabled:
         return False, "SMTP deshabilitado"
     if not all([settings.smtp_host, settings.smtp_user, settings.smtp_password, settings.mail_from]):
@@ -20,6 +25,14 @@ def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str | Non
         msg["From"] = settings.mail_from
         msg["To"] = to_email
         msg.set_content(body)
+        for attachment in attachments or []:
+            filename = str(attachment.get("filename") or "adjunto.bin")
+            content = attachment.get("content")
+            mime_type = str(attachment.get("mime_type") or "application/octet-stream")
+            if not isinstance(content, (bytes, bytearray)):
+                continue
+            maintype, subtype = mime_type.split("/", 1) if "/" in mime_type else ("application", "octet-stream")
+            msg.add_attachment(bytes(content), maintype=maintype, subtype=subtype, filename=filename)
 
         if settings.smtp_use_ssl:
             with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=20) as server:
@@ -45,6 +58,7 @@ def create_internal_notifications(
     titulo: str,
     mensaje: str,
     tipo: str = "CONCILIACION",
+    conciliacion_id: int | None = None,
 ) -> None:
     for user in recipients:
         notif = Notificacion(
@@ -56,6 +70,7 @@ def create_internal_notifications(
             email_intentado=False,
             email_enviado=False,
             email_error=None,
+            conciliacion_id=conciliacion_id,
         )
         db.add(notif)
 
@@ -92,12 +107,13 @@ def send_manual_email(
     *,
     subject: str,
     body: str,
+    attachments: list[dict[str, object]] | None = None,
 ) -> dict:
     sent = 0
     failed = 0
     errors: list[str] = []
     for to_email in recipients:
-        ok, err = _send_email(to_email, subject, body)
+        ok, err = _send_email(to_email, subject, body, attachments=attachments)
         if ok:
             sent += 1
         else:

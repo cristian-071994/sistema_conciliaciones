@@ -1,36 +1,429 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_cointra_admin
+from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.cliente import Cliente
-from app.models.enums import UserRole
+from app.models.enums import CointraSubRol, UserRole
 from app.models.operacion import Operacion
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
-from app.schemas.catalogs import ClienteOut, OperacionOut, OperacionRentabilidadUpdate, TerceroOut
+from app.schemas.catalogs import (
+    ClienteCreate,
+    ClienteOut,
+    ClienteUpdate,
+    OperacionCreate,
+    OperacionOut,
+    OperacionRentabilidadUpdate,
+    OperacionUpdate,
+    TerceroCreate,
+    TerceroOut,
+    TerceroUpdate,
+)
+from app.schemas.user import UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/catalogs", tags=["catalogs"])
 
 
+def _ensure_cointra_admin(user: Usuario) -> None:
+    if not is_cointra_admin(user):
+        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede editar o inactivar")
+
+
 @router.get("/clientes", response_model=list[ClienteOut])
 def get_clientes(db: Session = Depends(get_db), _: Usuario = Depends(get_current_user)):
-    return db.query(Cliente).filter(Cliente.activo.is_(True)).order_by(Cliente.nombre).all()
+    user = _
+    query = db.query(Cliente)
+    if not is_cointra_admin(user):
+        query = query.filter(Cliente.activo.is_(True))
+    return query.order_by(Cliente.nombre).all()
+
+
+@router.post("/clientes", response_model=ClienteOut)
+def create_cliente(
+    payload: ClienteCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede crear clientes")
+
+    nit = payload.nit.strip()
+    if db.query(Cliente).filter(Cliente.nit == nit).first():
+        raise HTTPException(status_code=400, detail="Ya existe un cliente con ese NIT")
+
+    cliente = Cliente(nombre=payload.nombre.strip(), nit=nit, activo=True)
+    db.add(cliente)
+    db.commit()
+    db.refresh(cliente)
+    return cliente
 
 
 @router.get("/terceros", response_model=list[TerceroOut])
 def get_terceros(db: Session = Depends(get_db), _: Usuario = Depends(get_current_user)):
-    return db.query(Tercero).filter(Tercero.activo.is_(True)).order_by(Tercero.nombre).all()
+    user = _
+    query = db.query(Tercero)
+    if not is_cointra_admin(user):
+        query = query.filter(Tercero.activo.is_(True))
+    return query.order_by(Tercero.nombre).all()
+
+
+@router.post("/terceros", response_model=TerceroOut)
+def create_tercero(
+    payload: TerceroCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede crear terceros")
+
+    nit = payload.nit.strip()
+    if db.query(Tercero).filter(Tercero.nit == nit).first():
+        raise HTTPException(status_code=400, detail="Ya existe un tercero con ese NIT")
+
+    tercero = Tercero(nombre=payload.nombre.strip(), nit=nit, activo=True)
+    db.add(tercero)
+    db.commit()
+    db.refresh(tercero)
+    return tercero
 
 
 @router.get("/operaciones", response_model=list[OperacionOut])
 def get_operaciones(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
-    query = db.query(Operacion).filter(Operacion.activa.is_(True))
+    query = db.query(Operacion)
+    if not is_cointra_admin(user):
+        query = query.filter(Operacion.activa.is_(True))
     if user.rol.value == "CLIENTE" and user.cliente_id:
         query = query.filter(Operacion.cliente_id == user.cliente_id)
     if user.rol.value == "TERCERO" and user.tercero_id:
         query = query.filter(Operacion.tercero_id == user.tercero_id)
     return query.order_by(Operacion.nombre).all()
+
+
+@router.post("/operaciones", response_model=OperacionOut)
+def create_operacion(
+    payload: OperacionCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede crear operaciones")
+
+    cliente = db.get(Cliente, payload.cliente_id)
+    if not cliente or not cliente.activo:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    tercero = db.get(Tercero, payload.tercero_id)
+    if not tercero or not tercero.activo:
+        raise HTTPException(status_code=404, detail="Tercero no encontrado")
+
+    operacion = Operacion(
+        cliente_id=payload.cliente_id,
+        tercero_id=payload.tercero_id,
+        nombre=payload.nombre.strip(),
+        porcentaje_rentabilidad=payload.porcentaje_rentabilidad,
+        activa=True,
+    )
+    db.add(operacion)
+    db.commit()
+    db.refresh(operacion)
+    return operacion
+
+
+@router.get("/usuarios", response_model=list[UserOut])
+def get_usuarios(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    if user.rol != UserRole.COINTRA or user.sub_rol != CointraSubRol.COINTRA_ADMIN:
+        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede listar usuarios")
+    return db.query(Usuario).order_by(Usuario.id.desc()).all()
+
+
+@router.patch("/clientes/{cliente_id}", response_model=ClienteOut)
+def update_cliente(
+    cliente_id: int,
+    payload: ClienteUpdate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    cliente = db.get(Cliente, cliente_id)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "nit" in data:
+        nit = (data["nit"] or "").strip()
+        existing = db.query(Cliente).filter(Cliente.nit == nit, Cliente.id != cliente_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Ya existe un cliente con ese NIT")
+        data["nit"] = nit
+    if "nombre" in data and data["nombre"] is not None:
+        data["nombre"] = data["nombre"].strip()
+
+    for field, value in data.items():
+        setattr(cliente, field, value)
+    db.commit()
+    db.refresh(cliente)
+    return cliente
+
+
+@router.delete("/clientes/{cliente_id}")
+def deactivate_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    cliente = db.get(Cliente, cliente_id)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cliente.activo = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/clientes/{cliente_id}/reactivar")
+def reactivate_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    cliente = db.get(Cliente, cliente_id)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cliente.activo = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/terceros/{tercero_id}", response_model=TerceroOut)
+def update_tercero(
+    tercero_id: int,
+    payload: TerceroUpdate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    tercero = db.get(Tercero, tercero_id)
+    if not tercero:
+        raise HTTPException(status_code=404, detail="Tercero no encontrado")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "nit" in data:
+        nit = (data["nit"] or "").strip()
+        existing = db.query(Tercero).filter(Tercero.nit == nit, Tercero.id != tercero_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Ya existe un tercero con ese NIT")
+        data["nit"] = nit
+    if "nombre" in data and data["nombre"] is not None:
+        data["nombre"] = data["nombre"].strip()
+
+    for field, value in data.items():
+        setattr(tercero, field, value)
+    db.commit()
+    db.refresh(tercero)
+    return tercero
+
+
+@router.delete("/terceros/{tercero_id}")
+def deactivate_tercero(
+    tercero_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    tercero = db.get(Tercero, tercero_id)
+    if not tercero:
+        raise HTTPException(status_code=404, detail="Tercero no encontrado")
+    tercero.activo = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/terceros/{tercero_id}/reactivar")
+def reactivate_tercero(
+    tercero_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    tercero = db.get(Tercero, tercero_id)
+    if not tercero:
+        raise HTTPException(status_code=404, detail="Tercero no encontrado")
+    tercero.activo = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/operaciones/{operacion_id}", response_model=OperacionOut)
+def update_operacion(
+    operacion_id: int,
+    payload: OperacionUpdate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    operacion = db.get(Operacion, operacion_id)
+    if not operacion:
+        raise HTTPException(status_code=404, detail="Operacion no encontrada")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "cliente_id" in data:
+        cliente = db.get(Cliente, data["cliente_id"])
+        if not cliente or not cliente.activo:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if "tercero_id" in data:
+        tercero = db.get(Tercero, data["tercero_id"])
+        if not tercero or not tercero.activo:
+            raise HTTPException(status_code=404, detail="Tercero no encontrado")
+    if "nombre" in data and data["nombre"] is not None:
+        data["nombre"] = data["nombre"].strip()
+
+    for field, value in data.items():
+        setattr(operacion, field, value)
+    db.commit()
+    db.refresh(operacion)
+    return operacion
+
+
+@router.delete("/operaciones/{operacion_id}")
+def deactivate_operacion(
+    operacion_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    operacion = db.get(Operacion, operacion_id)
+    if not operacion:
+        raise HTTPException(status_code=404, detail="Operacion no encontrada")
+    operacion.activa = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/operaciones/{operacion_id}/reactivar")
+def reactivate_operacion(
+    operacion_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    operacion = db.get(Operacion, operacion_id)
+    if not operacion:
+        raise HTTPException(status_code=404, detail="Operacion no encontrada")
+    operacion.activa = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/usuarios/{usuario_id}", response_model=UserOut)
+def update_usuario(
+    usuario_id: int,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    usuario = db.get(Usuario, usuario_id)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "email" in data and data["email"] is not None:
+        email = data["email"].strip().lower()
+        existing = db.query(Usuario).filter(Usuario.email == email, Usuario.id != usuario_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
+        data["email"] = email
+    if "nombre" in data and data["nombre"] is not None:
+        data["nombre"] = data["nombre"].strip()
+
+    for field, value in data.items():
+        setattr(usuario, field, value)
+    db.commit()
+    db.refresh(usuario)
+    return usuario
+
+
+@router.delete("/usuarios/{usuario_id}")
+def deactivate_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    usuario = db.get(Usuario, usuario_id)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    usuario.activo = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/usuarios/{usuario_id}/reactivar")
+def reactivate_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    _ensure_cointra_admin(user)
+    usuario = db.get(Usuario, usuario_id)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    usuario.activo = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/usuarios", response_model=UserOut)
+def create_usuario(
+    payload: UserCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if user.rol != UserRole.COINTRA or user.sub_rol != CointraSubRol.COINTRA_ADMIN:
+        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede crear usuarios")
+
+    email = payload.email.strip().lower()
+    if db.query(Usuario).filter(Usuario.email == email).first():
+        raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
+
+    if payload.rol == UserRole.CLIENTE:
+        if not payload.cliente_id:
+            raise HTTPException(status_code=400, detail="Debe seleccionar cliente para usuarios CLIENTE")
+        if not db.get(Cliente, payload.cliente_id):
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    elif payload.cliente_id is not None:
+        raise HTTPException(status_code=400, detail="cliente_id solo aplica para usuarios CLIENTE")
+
+    if payload.rol == UserRole.TERCERO:
+        if not payload.tercero_id:
+            raise HTTPException(status_code=400, detail="Debe seleccionar tercero para usuarios TERCERO")
+        if not db.get(Tercero, payload.tercero_id):
+            raise HTTPException(status_code=404, detail="Tercero no encontrado")
+    elif payload.tercero_id is not None:
+        raise HTTPException(status_code=400, detail="tercero_id solo aplica para usuarios TERCERO")
+
+    if payload.rol == UserRole.COINTRA:
+        sub_rol = payload.sub_rol or CointraSubRol.COINTRA_USER
+    else:
+        sub_rol = None
+
+    usuario = Usuario(
+        nombre=payload.nombre.strip(),
+        email=email,
+        password_hash=get_password_hash(payload.password),
+        rol=payload.rol,
+        sub_rol=sub_rol,
+        cliente_id=payload.cliente_id if payload.rol == UserRole.CLIENTE else None,
+        tercero_id=payload.tercero_id if payload.rol == UserRole.TERCERO else None,
+        activo=True,
+    )
+    db.add(usuario)
+    db.commit()
+    db.refresh(usuario)
+    return usuario
 
 
 @router.patch("/operaciones/{operacion_id}/rentabilidad", response_model=OperacionOut)

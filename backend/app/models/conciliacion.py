@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +16,8 @@ class Conciliacion(Base):
     fecha_inicio: Mapped[datetime] = mapped_column(Date, nullable=False)
     fecha_fin: Mapped[datetime] = mapped_column(Date, nullable=False)
     estado: Mapped[ConciliacionEstado] = mapped_column(Enum(ConciliacionEstado), default=ConciliacionEstado.BORRADOR)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    enviada_facturacion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

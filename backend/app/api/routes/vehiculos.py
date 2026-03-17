@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.enums import CointraSubRol, UserRole
+from app.models.tercero import Tercero
 from app.models.tipo_vehiculo import TipoVehiculo
 from app.models.usuario import Usuario
 from app.models.vehiculo import Vehiculo
@@ -17,13 +18,11 @@ def _is_cointra_admin(user: Usuario) -> bool:
 
 
 @router.get("/tipos-vehiculo", response_model=list[TipoVehiculoOut])
-def list_tipos_vehiculo(db: Session = Depends(get_db), _: Usuario = Depends(get_current_user)):
-    return (
-        db.query(TipoVehiculo)
-        .filter(TipoVehiculo.activo.is_(True))
-        .order_by(TipoVehiculo.nombre)
-        .all()
-    )
+def list_tipos_vehiculo(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    query = db.query(TipoVehiculo)
+    if not _is_cointra_admin(user):
+        query = query.filter(TipoVehiculo.activo.is_(True))
+    return query.order_by(TipoVehiculo.nombre).all()
 
 
 @router.post("/tipos-vehiculo", response_model=TipoVehiculoOut)
@@ -86,14 +85,32 @@ def delete_tipo_vehiculo(
     return {"ok": True}
 
 
+@router.post("/tipos-vehiculo/{tipo_id}/reactivar")
+def reactivate_tipo_vehiculo(
+    tipo_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if not _is_cointra_admin(user):
+        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede reactivar tipos de vehiculo")
+
+    tipo = db.get(TipoVehiculo, tipo_id)
+    if not tipo:
+        raise HTTPException(status_code=404, detail="Tipo de vehiculo no encontrado")
+
+    tipo.activo = True
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("", response_model=list[VehiculoOut])
-def list_vehiculos(db: Session = Depends(get_db), _: Usuario = Depends(get_current_user)):
-    return (
-        db.query(Vehiculo)
-        .filter(Vehiculo.activo.is_(True))
-        .order_by(Vehiculo.placa)
-        .all()
-    )
+def list_vehiculos(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    query = db.query(Vehiculo)
+    if user.rol == UserRole.TERCERO and user.tercero_id:
+        query = query.filter(Vehiculo.tercero_id == user.tercero_id, Vehiculo.activo.is_(True))
+    elif not _is_cointra_admin(user):
+        query = query.filter(Vehiculo.activo.is_(True))
+    return query.order_by(Vehiculo.placa).all()
 
 
 @router.post("", response_model=VehiculoOut)
@@ -110,6 +127,13 @@ def create_vehiculo(
     if not tipo or not tipo.activo:
         raise HTTPException(status_code=400, detail="Tipo de vehiculo invalido")
 
+    tercero = db.get(Tercero, payload.tercero_id)
+    if not tercero or not tercero.activo:
+        raise HTTPException(status_code=400, detail="Tercero invalido")
+
+    if user.rol == UserRole.TERCERO and user.tercero_id != payload.tercero_id:
+        raise HTTPException(status_code=403, detail="Solo puedes registrar vehiculos para tu tercero")
+
     placa_up = payload.placa.upper()
     existing = db.query(Vehiculo).filter(Vehiculo.placa == placa_up).first()
     if existing:
@@ -118,7 +142,8 @@ def create_vehiculo(
         # Reactivar vehiculo previamente eliminado
         existing.activo = True
         existing.tipo_vehiculo_id = payload.tipo_vehiculo_id
-        existing.propietario = payload.propietario
+        existing.tercero_id = payload.tercero_id
+        existing.propietario = tercero.nombre
         existing.created_by = user.id
         db.commit()
         db.refresh(existing)
@@ -127,7 +152,8 @@ def create_vehiculo(
     vehiculo = Vehiculo(
         placa=placa_up,
         tipo_vehiculo_id=payload.tipo_vehiculo_id,
-        propietario=payload.propietario,
+        tercero_id=payload.tercero_id,
+        propietario=tercero.nombre,
         activo=True,
         created_by=user.id,
     )
@@ -164,9 +190,14 @@ def update_vehiculo(
     if not tipo or not tipo.activo:
         raise HTTPException(status_code=400, detail="Tipo de vehiculo invalido")
 
+    tercero = db.get(Tercero, payload.tercero_id)
+    if not tercero or not tercero.activo:
+        raise HTTPException(status_code=400, detail="Tercero invalido")
+
     vehiculo.placa = payload.placa.upper()
     vehiculo.tipo_vehiculo_id = payload.tipo_vehiculo_id
-    vehiculo.propietario = payload.propietario
+    vehiculo.tercero_id = payload.tercero_id
+    vehiculo.propietario = tercero.nombre
     db.commit()
     db.refresh(vehiculo)
     return vehiculo
@@ -187,6 +218,24 @@ def delete_vehiculo(
         raise HTTPException(status_code=404, detail="Vehiculo no encontrado")
 
     vehiculo.activo = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{vehiculo_id}/reactivar")
+def reactivate_vehiculo(
+    vehiculo_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if not _is_cointra_admin(user):
+        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede reactivar vehiculos")
+
+    vehiculo = db.get(Vehiculo, vehiculo_id)
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehiculo no encontrado")
+
+    vehiculo.activo = True
     db.commit()
     return {"ok": True}
 

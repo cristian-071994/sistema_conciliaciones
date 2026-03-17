@@ -37,8 +37,23 @@ class ViajeOut(ORMModel):
     descripcion: str | None
     cargado_por: str
     conciliado: bool
+    estado_conciliacion: str | None = None
+    activo: bool
     created_by: int
     created_at: datetime
+
+
+class ViajeUpdate(BaseModel):
+    titulo: str | None = None
+    fecha_servicio: date | None = None
+    origen: str | None = None
+    destino: str | None = None
+    placa: str | None = None
+    conductor: str | None = None
+    tarifa_tercero: float | None = None
+    tarifa_cliente: float | None = None
+    manifiesto_numero: str | None = None
+    descripcion: str | None = None
 
 
 class AdjuntarViajesRequest(BaseModel):

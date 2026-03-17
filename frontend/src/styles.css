@@ -2,10 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+}
+
 @layer base {
+  html {
+    background:
+      radial-gradient(circle at top left, rgba(20, 131, 92, 0.10), transparent 28%),
+      radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 24%),
+      #f5faf7;
+  }
+
   body {
     @apply bg-bg text-text antialiased;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  .bg-primary {
+    background-color: #0f766e !important;
+  }
+
+  .text-primary {
+    color: #0f766e !important;
+  }
+
+  .border-primary {
+    border-color: #0f766e !important;
+  }
+
+  .ring-primary\/10 {
+    --tw-ring-color: rgb(15 118 110 / 0.1) !important;
+  }
+
+  .focus\:border-primary:focus {
+    border-color: #0f766e !important;
+  }
+
+  .focus\:ring-primary\/10:focus {
+    --tw-ring-color: rgb(15 118 110 / 0.1) !important;
+  }
+
+  .focus\:ring-primary\/40:focus {
+    --tw-ring-color: rgb(15 118 110 / 0.4) !important;
+  }
+
+  .focus-visible\:ring-primary:focus-visible {
+    --tw-ring-color: #0f766e !important;
+  }
+
+  .hover\:bg-primary\/90:hover {
+    background-color: rgb(15 118 110 / 0.9) !important;
+  }
+
+  .enabled\:hover\:bg-primary\/90:enabled:hover {
+    background-color: rgb(15 118 110 / 0.9) !important;
+  }
+
+  .hover\:text-primary\/80:hover {
+    color: rgb(15 118 110 / 0.8) !important;
   }
 }
 
