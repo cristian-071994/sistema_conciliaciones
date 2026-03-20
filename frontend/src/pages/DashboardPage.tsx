@@ -198,6 +198,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [conciliacionManifiestos, setConciliacionManifiestos] = useState<ConciliacionManifiesto[]>([]);
   const [liquidacionManifiestoInput, setLiquidacionManifiestoInput] = useState("");
   const [conciliacionManifiestoInput, setConciliacionManifiestoInput] = useState("");
+  const [liquidacionManifiestoError, setLiquidacionManifiestoError] = useState("");
+  const [conciliacionManifiestoError, setConciliacionManifiestoError] = useState("");
   const [savingManifiesto, setSavingManifiesto] = useState(false);
   const [removingManifiestoId, setRemovingManifiestoId] = useState<number | null>(null);
   const [removingLiquidacionItemId, setRemovingLiquidacionItemId] = useState<number | null>(null);
@@ -282,6 +284,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     } | null
   >(null);
   const selectedConciliacionRef = useRef<HTMLElement | null>(null);
+  const liquidacionManifiestoInputRef = useRef<HTMLInputElement | null>(null);
+  const conciliacionManifiestoInputRef = useRef<HTMLInputElement | null>(null);
   const reviewRecipientDirtyRef = useRef(false);
   const suggestedReviewForConciliacionRef = useRef<number | null>(null);
 
@@ -678,6 +682,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       setConciliacionManifiestos(manifestsConciliacion);
       setLiquidacionManifiestoInput("");
       setConciliacionManifiestoInput("");
+      setLiquidacionManifiestoError("");
+      setConciliacionManifiestoError("");
       if (user.rol === "CLIENTE") {
         const initialSelections: Record<number, boolean> = {};
         for (const item of itemData) {
@@ -709,6 +715,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       setConciliacionManifiestos([]);
       setLiquidacionManifiestoInput("");
       setConciliacionManifiestoInput("");
+      setLiquidacionManifiestoError("");
+      setConciliacionManifiestoError("");
       return false;
     } finally {
       setLoadingItems(false);
@@ -1013,6 +1021,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (!value) return;
 
     setError("");
+    setLiquidacionManifiestoError("");
     setSavingManifiesto(true);
     try {
       await api.asociarManifiestoConciliacion(
@@ -1023,9 +1032,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       const manifests = await api.manifiestosConciliacion(selected.id, "LIQUIDACION_CONTRATO_FIJO");
       setLiquidacionManifiestos(manifests);
       setLiquidacionManifiestoInput("");
+      setLiquidacionManifiestoError("");
       await onRefreshConciliaciones();
     } catch (e) {
-      setError(toSpanishError(e));
+      const detail = toSpanishError(e);
+      setError(detail);
+      setLiquidacionManifiestoError(detail);
+      liquidacionManifiestoInputRef.current?.focus();
     } finally {
       setSavingManifiesto(false);
     }
@@ -1037,15 +1050,20 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (!value) return;
 
     setError("");
+    setConciliacionManifiestoError("");
     setSavingManifiesto(true);
     try {
       await api.asociarManifiestoConciliacion(selected.id, value, "CONCILIACION");
       const manifests = await api.manifiestosConciliacion(selected.id, "CONCILIACION");
       setConciliacionManifiestos(manifests);
       setConciliacionManifiestoInput("");
+      setConciliacionManifiestoError("");
       await onRefreshConciliaciones();
     } catch (e) {
-      setError(toSpanishError(e));
+      const detail = toSpanishError(e);
+      setError(detail);
+      setConciliacionManifiestoError(detail);
+      conciliacionManifiestoInputRef.current?.focus();
     } finally {
       setSavingManifiesto(false);
     }
@@ -2706,21 +2724,30 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     )}
 
                     {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                      <div className="grid gap-2 md:grid-cols-[1fr,auto]">
-                        <input
-                          value={liquidacionManifiestoInput}
-                          onChange={(e) => setLiquidacionManifiestoInput(e.target.value)}
-                          placeholder="Escribe manifiesto..."
-                          className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void asociarManifiestoLiquidacion()}
-                          disabled={!liquidacionManifiestoInput.trim() || savingManifiesto}
-                          className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 disabled:opacity-50"
-                        >
-                          Asociar
-                        </button>
+                      <div className="space-y-1">
+                        <div className="grid gap-2 md:grid-cols-[1fr,auto]">
+                          <input
+                            ref={liquidacionManifiestoInputRef}
+                            value={liquidacionManifiestoInput}
+                            onChange={(e) => {
+                              setLiquidacionManifiestoInput(e.target.value);
+                              if (liquidacionManifiestoError) setLiquidacionManifiestoError("");
+                            }}
+                            placeholder="Escribe manifiesto..."
+                            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void asociarManifiestoLiquidacion()}
+                            disabled={!liquidacionManifiestoInput.trim() || savingManifiesto}
+                            className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 disabled:opacity-50"
+                          >
+                            Asociar
+                          </button>
+                        </div>
+                        {liquidacionManifiestoError && (
+                          <p className="text-xs font-medium text-danger">{liquidacionManifiestoError}</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3242,21 +3269,30 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 )}
 
                 {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr,auto]">
-                    <input
-                      value={conciliacionManifiestoInput}
-                      onChange={(e) => setConciliacionManifiestoInput(e.target.value)}
-                      placeholder="Escribe manifiesto para conciliación..."
-                      className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void asociarManifiestoConciliacion()}
-                      disabled={!conciliacionManifiestoInput.trim() || savingManifiesto}
-                      className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      Asociar
-                    </button>
+                  <div className="mt-3 space-y-1">
+                    <div className="grid gap-2 md:grid-cols-[1fr,auto]">
+                      <input
+                        ref={conciliacionManifiestoInputRef}
+                        value={conciliacionManifiestoInput}
+                        onChange={(e) => {
+                          setConciliacionManifiestoInput(e.target.value);
+                          if (conciliacionManifiestoError) setConciliacionManifiestoError("");
+                        }}
+                        placeholder="Escribe manifiesto para conciliación..."
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void asociarManifiestoConciliacion()}
+                        disabled={!conciliacionManifiestoInput.trim() || savingManifiesto}
+                        className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        Asociar
+                      </button>
+                    </div>
+                    {conciliacionManifiestoError && (
+                      <p className="text-xs font-medium text-danger">{conciliacionManifiestoError}</p>
+                    )}
                   </div>
                 )}
               </div>

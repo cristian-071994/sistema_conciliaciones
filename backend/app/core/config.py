@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 480
     database_url: str = "sqlite:///./cointra.db"
     cors_origins: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:5173"
+    password_reset_token_expire_minutes: int = 30
 
     smtp_enabled: bool = False
     smtp_host: str = ""

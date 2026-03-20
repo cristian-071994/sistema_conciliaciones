@@ -1,8 +1,18 @@
-import { AvansatCacheListResult, AvansatLookup, AvansatSyncResult, CatalogoTarifa, Cliente, Conciliacion, ConciliacionManifiesto, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Servicio, TarifaLookup, Tercero, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatLookup, AvansatSyncResult, CatalogoTarifa, Cliente, Conciliacion, ConciliacionManifiesto, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Servicio, TarifaLookup, Tercero, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  config: { skipUnauthorizedHandler?: boolean } = {}
+): Promise<T> {
   const token = localStorage.getItem("token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -18,7 +28,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!response.ok) {
-    const message = await response.text();
+    const raw = await response.text();
+    if (response.status === 401 && !config.skipUnauthorizedHandler && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
+    let message = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.detail === "string") {
+        message = parsed.detail;
+      }
+    } catch {
+      // fallback to raw text
+    }
     throw new Error(message || "Error en la solicitud");
   }
   return response.json();
@@ -29,8 +51,23 @@ export const api = {
     request<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
-    }),
+    }, { skipUnauthorizedHandler: true }),
   me: () => request<User>("/auth/me"),
+  changePassword: (payload: { current_password: string; new_password: string; confirm_password: string }) =>
+    request<AuthMessage>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  forgotPassword: (email: string) =>
+    request<AuthMessage>("/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }, { skipUnauthorizedHandler: true }),
+  resetPassword: (payload: { token: string; new_password: string; confirm_password: string }) =>
+    request<AuthMessage>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, { skipUnauthorizedHandler: true }),
   usuarios: () => request<User[]>("/catalogs/usuarios"),
   crearUsuario: (payload: {
     nombre: string;
@@ -333,7 +370,19 @@ export const api = {
       headers,
     });
     if (!response.ok) {
-      const message = await response.text();
+      const raw = await response.text();
+      if (response.status === 401 && unauthorizedHandler) {
+        unauthorizedHandler();
+      }
+      let message = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.detail === "string") {
+          message = parsed.detail;
+        }
+      } catch {
+        // fallback to raw text
+      }
       throw new Error(message || "Error en la descarga de conciliacion");
     }
     return response.blob();

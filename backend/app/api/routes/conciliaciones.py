@@ -19,6 +19,7 @@ from app.models.conciliacion_item import ConciliacionItem
 from app.models.enums import ItemEstado, ItemTipo, UserRole
 from app.models.historial_cambio import HistorialCambio
 from app.models.operacion import Operacion
+from app.models.manifiesto_avansat import ManifiestoAvansat
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
 from app.models.vehiculo import Vehiculo
@@ -45,7 +46,6 @@ from app.schemas.conciliacion import (
 from app.services.pricing import apply_rentabilidad
 from app.services.audit import log_change
 from app.services.notifications import create_internal_notifications, send_manual_email
-from app.services.avansat import fetch_avansat_by_manifiesto
 from app.services.avansat_cache import resolve_avansat_from_cache_only
 from app.services.visibility import sanitize_item_for_role
 from app.schemas.viaje import AdjuntarViajesRequest, ViajeOut
@@ -486,6 +486,73 @@ def _normalize_placa_for_compare(value: object) -> str:
     return "".join(ch for ch in raw if ch.isalnum())
 
 
+def _validate_manifiesto_placa_match_or_raise(
+    db: Session,
+    conciliacion_id: int,
+    contexto: str,
+    manifiesto_numero: str,
+    liquidacion_contrato_fijo_id: int | None = None,
+) -> None:
+    manifiesto = _normalize_manifiesto_for_lookup(manifiesto_numero)
+    if not manifiesto:
+        raise HTTPException(status_code=400, detail="Debes escribir un manifiesto valido")
+
+    avansat = _fetch_avansat_with_fallback(db, manifiesto)
+    if not avansat:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El manifiesto {manifiesto} no existe en la tabla manifiestos_avansat. "
+                "Sincroniza Avansat o corrige el numero antes de asociarlo."
+            ),
+        )
+
+    placa_avansat = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
+    if not placa_avansat:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El manifiesto {manifiesto} no tiene placa valida en manifiestos_avansat. "
+                "Corrige el manifiesto antes de asociarlo."
+            ),
+        )
+
+    items = (
+        db.query(ConciliacionItem)
+        .filter(ConciliacionItem.conciliacion_id == conciliacion_id)
+        .all()
+    )
+
+    placas_contexto: set[str] = set()
+    for item in items:
+        placa_item = _normalize_placa_for_compare(item.placa)
+        if not placa_item:
+            continue
+
+        liq_meta = _extract_liquidacion_metadata(item)
+        if contexto == MANIFIESTO_CONTEXTO_LIQUIDACION:
+            if not liq_meta:
+                continue
+            if (
+                liquidacion_contrato_fijo_id is not None
+                and liq_meta.get("liquidacion_contrato_fijo_id") != liquidacion_contrato_fijo_id
+            ):
+                continue
+            placas_contexto.add(placa_item)
+        else:
+            if liq_meta:
+                continue
+            placas_contexto.add(placa_item)
+
+    if placa_avansat not in placas_contexto:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La placa del manifiesto no corresponde a ninguna placa de los servicios relacionados"
+            ),
+        )
+
+
 def _is_liquidacion_manifest_mismatch(
     db: Session,
     conciliacion_id: int,
@@ -508,7 +575,7 @@ def _is_liquidacion_manifest_mismatch(
     if not placas_liquidacion:
         return True
 
-    avansat = _fetch_avansat_with_fallback(manifiesto)
+    avansat = _fetch_avansat_with_fallback(db, manifiesto)
     placa_avansat = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
     if not placa_avansat:
         return True
@@ -516,7 +583,11 @@ def _is_liquidacion_manifest_mismatch(
     return placa_avansat not in placas_liquidacion
 
 
-def _fetch_avansat_with_fallback(manifiesto: str, prefetched: dict[str, dict] | None = None) -> dict:
+def _fetch_avansat_with_fallback(
+    db: Session,
+    manifiesto: str,
+    prefetched: dict[str, dict] | None = None,
+) -> dict:
     if not manifiesto:
         return {}
     attempts = [manifiesto, manifiesto.lstrip("0")]
@@ -530,7 +601,8 @@ def _fetch_avansat_with_fallback(manifiesto: str, prefetched: dict[str, dict] | 
             prefetched_data = prefetched.get(candidate) or {}
             if prefetched_data:
                 return prefetched_data
-        data = fetch_avansat_by_manifiesto(candidate)
+        resolved, _ = resolve_avansat_from_cache_only(db, [candidate])
+        data = resolved.get(candidate) or {}
         if data:
             return data
     return {}
@@ -625,7 +697,11 @@ def _validate_manifests_match_plates_or_raise(
         )
 
 
-def _prepare_facturacion_rows(items: list[ConciliacionItem]) -> tuple[list[dict], list[str]]:
+def _prepare_facturacion_rows(
+    db: Session,
+    items: list[ConciliacionItem],
+    avansat_prefetched: dict[str, dict] | None = None,
+) -> tuple[list[dict], list[str]]:
     rows: list[dict] = []
     missing_manifiestos: list[str] = []
 
@@ -636,7 +712,7 @@ def _prepare_facturacion_rows(items: list[ConciliacionItem]) -> tuple[list[dict]
             missing_manifiestos.append(f"{viaje_ref} (sin manifiesto)")
             continue
 
-        avansat = _fetch_avansat_with_fallback(manifiesto)
+        avansat = _fetch_avansat_with_fallback(db, manifiesto, avansat_prefetched)
         if not avansat:
             missing_manifiestos.append(f"{viaje_ref} (manifiesto {manifiesto} sin datos en Avansat)")
             continue
@@ -2236,6 +2312,7 @@ def create_manifiesto(
     manifiesto_numero = payload.manifiesto_numero.strip()
     if not manifiesto_numero:
         raise HTTPException(status_code=400, detail="Debes escribir un manifiesto valido")
+
     contexto = _normalize_manifiesto_contexto(payload.contexto)
     liquidacion_contrato_fijo_id = payload.liquidacion_contrato_fijo_id
 
@@ -2247,6 +2324,14 @@ def create_manifiesto(
             )
     else:
         liquidacion_contrato_fijo_id = None
+
+    _validate_manifiesto_placa_match_or_raise(
+        db,
+        conc.id,
+        contexto,
+        manifiesto_numero,
+        liquidacion_contrato_fijo_id,
+    )
 
     exists = (
         db.query(ConciliacionManifiesto)
@@ -2359,6 +2444,14 @@ def update_manifiesto(
     new_value = _normalize_manifiesto_for_lookup(payload.manifiesto_numero)
     if not new_value:
         raise HTTPException(status_code=400, detail="Debes escribir un manifiesto valido")
+
+    _validate_manifiesto_placa_match_or_raise(
+        db,
+        conc.id,
+        row.contexto,
+        new_value,
+        row.liquidacion_contrato_fijo_id,
+    )
 
     exists = (
         db.query(ConciliacionManifiesto)

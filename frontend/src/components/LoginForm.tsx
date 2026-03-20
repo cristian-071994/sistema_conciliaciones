@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 
 interface Props {
   onLogin: (email: string, password: string) => Promise<void>;
@@ -81,6 +82,12 @@ export function LoginForm({ onLogin }: Props) {
       >
         Ingresar
       </button>
+
+      <p className="text-sm text-neutral">
+        <Link to="/forgot-password" className="font-medium text-emerald-700 hover:text-emerald-800">
+          Olvide mi contraseña
+        </Link>
+      </p>
 
       <p className="text-xs leading-relaxed text-neutral">
         Demo: cointra@cointra.com / cliente@cointra.com / tercero@cointra.com (clave terminada en 123)

@@ -13,6 +13,7 @@ class Usuario(Base):
     nombre: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rol: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     sub_rol: Mapped[CointraSubRol | None] = mapped_column(Enum(CointraSubRol), nullable=True)
     cliente_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clientes.id"), nullable=True)

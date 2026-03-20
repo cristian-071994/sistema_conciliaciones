@@ -148,6 +148,87 @@ export function AvansatPage({ user }: Props) {
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
+  function getVisiblePages(): number[] {
+    const maxLinks = 6;
+    if (totalPages <= maxLinks) {
+      return Array.from({ length: totalPages }, (_, idx) => idx + 1);
+    }
+
+    const half = Math.floor(maxLinks / 2);
+    let start = Math.max(1, page - half);
+    let end = start + maxLinks - 1;
+
+    if (end > totalPages) {
+      end = totalPages;
+      start = end - maxLinks + 1;
+    }
+
+    return Array.from({ length: end - start + 1 }, (_, idx) => start + idx);
+  }
+
+  function renderPaginationControls() {
+    const visiblePages = getVisiblePages();
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1">
+          <button
+            type="button"
+            disabled={page <= 1 || loading}
+            onClick={() => void loadCache(page - 1)}
+            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Anterior
+          </button>
+
+          <button
+            type="button"
+            disabled={page <= 1 || loading}
+            onClick={() => void loadCache(1)}
+            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Inicio
+          </button>
+
+          {visiblePages.map((num) => (
+            <button
+              key={num}
+              type="button"
+              disabled={loading || num === page}
+              onClick={() => void loadCache(num)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm transition ${
+                num === page
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                  : "border-border bg-white text-slate-700 enabled:hover:bg-slate-50"
+              } disabled:cursor-not-allowed disabled:opacity-70`}
+            >
+              {num}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            disabled={page >= totalPages || loading}
+            onClick={() => void loadCache(totalPages)}
+            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Fin
+          </button>
+
+          <button
+            type="button"
+            disabled={page >= totalPages || loading}
+            onClick={() => void loadCache(page + 1)}
+            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Siguiente
+          </button>
+        </div>
+
+        <span className="text-xs text-neutral">Pagina {page} de {totalPages} · Total: {totalRows} registros</span>
+      </div>
+    );
+  }
+
   if (user.rol !== "COINTRA") {
     return (
       <section className="rounded-xl border border-border bg-white/90 p-5 shadow-sm">
@@ -218,7 +299,10 @@ export function AvansatPage({ user }: Props) {
           >
             Aplicar filtros
           </button>
-          <span className="text-xs text-neutral">Pagina {page} de {totalPages}</span>
+        </div>
+
+        <div className="mb-3">
+          {renderPaginationControls()}
         </div>
 
         <div className="overflow-x-auto">
@@ -294,24 +378,8 @@ export function AvansatPage({ user }: Props) {
           </table>
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            disabled={page <= 1 || loading}
-            onClick={() => void loadCache(page - 1)}
-            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Anterior
-          </button>
-          <span className="text-xs text-neutral">Total: {totalRows} registros</span>
-          <button
-            type="button"
-            disabled={page >= totalPages || loading}
-            onClick={() => void loadCache(page + 1)}
-            className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Siguiente
-          </button>
+        <div className="mt-4">
+          {renderPaginationControls()}
         </div>
       </section>
     </div>

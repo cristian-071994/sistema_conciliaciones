@@ -19,6 +19,10 @@ export interface LoginResponse {
   token_type: string;
 }
 
+export interface AuthMessage {
+  message: string;
+}
+
 export interface Operacion {
   id: number;
   cliente_id: number;

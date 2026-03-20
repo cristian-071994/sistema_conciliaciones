@@ -21,13 +21,19 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
+        token_type = str(payload.get("typ") or "")
+        token_version = int(payload.get("ver", 0))
         if user_id is None:
             raise credentials_exception
-    except JWTError as exc:
+        if token_type and token_type != "access":
+            raise credentials_exception
+    except (JWTError, ValueError, TypeError) as exc:
         raise credentials_exception from exc
 
     user = db.get(Usuario, int(user_id))
     if user is None or not user.activo:
+        raise credentials_exception
+    if int(user.token_version or 0) != token_version:
         raise credentials_exception
     return user
 

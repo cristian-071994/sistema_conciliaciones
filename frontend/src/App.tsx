@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { ActionModal } from "./components/common/ActionModal";
 import { LoginForm } from "./components/LoginForm";
 import { Layout } from "./components/layout/Layout";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DashboardHomePage } from "./pages/DashboardHomePage";
 import { OperacionesPage } from "./pages/OperacionesPage";
@@ -13,7 +16,7 @@ import { UsuariosPage } from "./pages/UsuariosPage";
 import { VehiculosPage } from "./pages/VehiculosPage";
 import { ServiciosPage } from "./pages/ServiciosPage";
 import { CatalogoTarifasPage } from "./pages/CatalogoTarifasPage";
-import { api } from "./services/api";
+import { api, setUnauthorizedHandler } from "./services/api";
 import { Conciliacion, Notificacion, Operacion, User } from "./types";
 
 export function App() {
@@ -25,7 +28,21 @@ export function App() {
   const [lastAlertSignatureSeen, setLastAlertSignatureSeen] = useState("");
   const [pendingConciliacionId, setPendingConciliacionId] = useState<number | null>(null);
   const [pendingNotificacionId, setPendingNotificacionId] = useState<number | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const navigate = useNavigate();
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("token");
+    setUser(null);
+    setOperaciones([]);
+    setConciliaciones([]);
+    setNotificaciones([]);
+    setShowAlertsModal(false);
+    setLastAlertSignatureSeen("");
+    setPendingConciliacionId(null);
+    setPendingNotificacionId(null);
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   async function refreshAlertsData() {
     const [con, notifs] = await Promise.all([
@@ -112,8 +129,20 @@ export function App() {
   }, [user]);
 
   useEffect(() => {
+    setUnauthorizedHandler(() => {
+      handleLogout();
+    });
+    return () => {
+      setUnauthorizedHandler(null);
+    };
+  }, [handleLogout]);
+
+  useEffect(() => {
     const token = localStorage.getItem("token");
-    if (!token) return;
+    if (!token) {
+      setAuthChecked(true);
+      return;
+    }
 
     api
       .me()
@@ -123,6 +152,9 @@ export function App() {
       })
       .catch(() => {
         localStorage.removeItem("token");
+      })
+      .finally(() => {
+        setAuthChecked(true);
       });
   }, []);
 
@@ -135,23 +167,26 @@ export function App() {
     navigate("/dashboard", { replace: true });
   }
 
-  function handleLogout() {
-    localStorage.removeItem("token");
-    setUser(null);
-    setOperaciones([]);
-    setConciliaciones([]);
-    setNotificaciones([]);
-    setShowAlertsModal(false);
-    setLastAlertSignatureSeen("");
-    setPendingConciliacionId(null);
-    setPendingNotificacionId(null);
+  if (!authChecked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-bg">
+        <div className="w-full max-w-md rounded-2xl border border-emerald-100 bg-white/92 p-8 shadow-lg shadow-emerald-900/10">
+          <p className="text-sm text-neutral">Validando sesion...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg">
+      <div className="flex min-h-screen items-center justify-center bg-bg px-4">
         <div className="w-full max-w-md rounded-2xl border border-emerald-100 bg-white/92 p-8 shadow-lg shadow-emerald-900/10">
-          <LoginForm onLogin={handleLogin} />
+          <Routes>
+            <Route path="/login" element={<LoginForm onLogin={handleLogin} />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
         </div>
       </div>
     );
@@ -162,12 +197,17 @@ export function App() {
       <Layout
         user={user}
         onLogout={handleLogout}
+        onChangePassword={() => navigate("/cambiar-password")}
         alertCount={alertCount}
         onOpenAlerts={() => setShowAlertsModal(true)}
       >
         <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/forgot-password" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/reset-password" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardHomePage user={user} />} />
+        <Route path="/cambiar-password" element={<ChangePasswordPage onPasswordChanged={handleLogout} />} />
         <Route
           path="/conciliaciones"
           element={

@@ -3,11 +3,12 @@ import type { User } from "../../types";
 interface TopbarProps {
   user: User;
   onLogout: () => void;
+  onChangePassword: () => void;
   alertCount?: number;
   onOpenAlerts?: () => void;
 }
 
-export function Topbar({ user, onLogout, alertCount = 0, onOpenAlerts }: TopbarProps) {
+export function Topbar({ user, onLogout, onChangePassword, alertCount = 0, onOpenAlerts }: TopbarProps) {
   return (
     <header className="fixed left-64 right-0 top-0 z-30 flex h-16 items-center justify-between border-b border-emerald-900/10 bg-white/88 px-6 backdrop-blur">
       <div>
@@ -29,13 +30,22 @@ export function Topbar({ user, onLogout, alertCount = 0, onOpenAlerts }: TopbarP
           )}
         </p>
       </div>
-      <button
-        type="button"
-        onClick={onLogout}
-        className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-100"
-      >
-        Cerrar sesión
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onChangePassword}
+          className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-100"
+        >
+          Cambiar contraseña
+        </button>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-100"
+        >
+          Cerrar sesión
+        </button>
+      </div>
     </header>
   );
 }
