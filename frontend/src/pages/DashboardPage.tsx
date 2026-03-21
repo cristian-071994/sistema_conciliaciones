@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocation } from "react-router-dom";
 import { ActionModal } from "../components/common/ActionModal";
 import excelLogo from "../assets/excel-logo.svg";
 import { api } from "../services/api";
@@ -177,7 +178,17 @@ interface Props {
 }
 
 export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConciliaciones, openConciliacionId, onOpenConciliacionHandled }: Props) {
+  const location = useLocation();
   const [activeModule, setActiveModule] = useState<"viajes" | "conciliaciones">("viajes");
+  const conciliacionesListRef = useRef<HTMLElement | null>(null);
+
+  function scrollToConciliacionesList() {
+    const el = conciliacionesListRef.current;
+    if (!el) return;
+    const y = el.getBoundingClientRect().top + window.scrollY - 12;
+    window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+    el.focus({ preventScroll: true });
+  }
   const isCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
   const [viajes, setViajes] = useState<Viaje[]>([]);
   const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
@@ -486,6 +497,22 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openConciliacionId]);
+
+  useEffect(() => {
+    if (location.hash !== "#lista-conciliaciones") return;
+    setActiveModule("conciliaciones");
+  }, [location.hash]);
+
+  useEffect(() => {
+    if (activeModule !== "conciliaciones") return;
+    if (location.hash !== "#lista-conciliaciones") return;
+    requestAnimationFrame(() => {
+      scrollToConciliacionesList();
+      window.setTimeout(() => {
+        scrollToConciliacionesList();
+      }, 180);
+    });
+  }, [activeModule, location.hash]);
 
   useEffect(() => {
     if (!selected) {
@@ -1685,7 +1712,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
             </section>
             )}
 
-            <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+            <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900">Servicios cargados</h3>
                 <div className="flex flex-1 items-center justify-end gap-2">
@@ -2024,7 +2051,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               </section>
             )}
 
-            <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+            <section
+              id="lista-conciliaciones"
+              ref={conciliacionesListRef}
+              tabIndex={-1}
+              className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none"
+            >
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900">Conciliaciones</h3>
                 <div className="flex flex-wrap items-center gap-2">

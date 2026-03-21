@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { api } from "../services/api";
 import type { DashboardIndicators, DashboardLabelValue, User } from "../types";
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function DashboardHomePage({ user }: Props) {
+  const navigate = useNavigate();
   const today = new Date();
   const [mode, setMode] = useState<"current_month" | "year_to_date" | "month_year">("current_month");
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -66,6 +68,10 @@ export function DashboardHomePage({ user }: Props) {
   const roleMoneyTitle = isCliente ? "Costos" : "Ingresos";
   const roleMoneyLabel = isCliente ? "Costo" : "Ingreso";
 
+  function goToConciliacionesList() {
+    navigate("/conciliaciones#lista-conciliaciones");
+  }
+
   function oneDecimal(value: number): string {
     return value.toFixed(1);
   }
@@ -78,12 +84,71 @@ export function DashboardHomePage({ user }: Props) {
     return `$ ${formatCOP(value)}`;
   }
 
-  function StatCard({ title, value, hint }: { title: string; value: string; hint?: string }) {
+  function StatCard({
+    title,
+    value,
+    hint,
+    tone,
+    highlightBadge,
+    onClick,
+  }: {
+    title: string;
+    value: string;
+    hint?: string;
+    tone?: "borrador" | "revision" | "aprobada" | "devuelta" | "servicios" | "conciliaciones" | "facturar";
+    highlightBadge?: string;
+    onClick?: () => void;
+  }) {
+    const toneClass =
+      tone === "borrador"
+        ? "border-amber-400 bg-gradient-to-br from-amber-100 via-amber-200 to-amber-300 shadow-amber-300/60"
+        : tone === "revision"
+          ? "border-sky-400 bg-gradient-to-br from-sky-100 via-sky-200 to-sky-300 shadow-sky-300/60"
+          : tone === "aprobada"
+            ? "border-emerald-400 bg-gradient-to-br from-emerald-100 via-emerald-200 to-emerald-300 shadow-emerald-300/60"
+            : tone === "devuelta"
+              ? "border-rose-400 bg-gradient-to-br from-rose-100 via-rose-200 to-rose-300 shadow-rose-300/60"
+              : tone === "servicios"
+                ? "border-cyan-400 bg-gradient-to-br from-cyan-100 via-cyan-200 to-cyan-300 shadow-cyan-300/60"
+                : tone === "conciliaciones"
+                  ? "border-indigo-400 bg-gradient-to-br from-indigo-100 via-indigo-200 to-indigo-300 shadow-indigo-300/60"
+                  : tone === "facturar"
+                    ? "border-violet-400 bg-gradient-to-br from-violet-100 via-violet-200 to-violet-300 shadow-violet-300/60"
+              : "border-emerald-100 bg-white";
+
+    const titleClass = tone ? "text-slate-800" : "text-neutral";
+    const valueClass = "text-slate-900";
+    const hintClass = tone ? "text-slate-700" : "text-neutral";
+    const badgeClass =
+      "bg-indigo-700/90 text-white";
+    const interactiveClass = onClick
+      ? "cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md"
+      : "";
+
     return (
-      <article className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral">{title}</p>
-        <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
-        {hint && <p className="mt-1 text-xs text-neutral">{hint}</p>}
+      <article
+        className={`rounded-2xl border p-4 shadow-sm ${toneClass} ${interactiveClass}`}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (!onClick) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick ? 0 : undefined}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <p className={`text-[11px] font-semibold uppercase tracking-wide ${titleClass}`}>{title}</p>
+          {highlightBadge && (
+            <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ${badgeClass}`}>
+              {highlightBadge}
+            </span>
+          )}
+        </div>
+        <p className={`mt-2 text-2xl font-bold ${valueClass}`}>{value}</p>
+        {hint && <p className={`mt-1 text-xs ${hintClass}`}>{hint}</p>}
       </article>
     );
   }
@@ -740,7 +805,8 @@ export function DashboardHomePage({ user }: Props) {
                 <StatCard
                   title="Conciliaciones"
                   value={String(data.kpis.conciliaciones)}
-                  hint={`Aprobación items ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
+                  hint="Total del período"
+                  highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
                 />
                 <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" />
                 <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" />
@@ -760,7 +826,12 @@ export function DashboardHomePage({ user }: Props) {
                   hint={isCliente ? "Tarifa cliente acumulada" : "Tarifa tercero acumulada"}
                 />
                 <StatCard title="Servicios" value={String(data.kpis.servicios)} />
-                <StatCard title="Conciliaciones" value={String(data.kpis.conciliaciones)} hint={`Aprobación items ${oneDecimal(data.kpis.aprobacion_items_pct)}%`} />
+                <StatCard
+                  title="Conciliaciones"
+                  value={String(data.kpis.conciliaciones)}
+                  hint="Total del período"
+                  highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
+                />
                 <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" />
                 <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" />
                 <StatCard title="Viajes pendientes" value={String(data.kpis.viajes_pendientes)} />
@@ -772,11 +843,11 @@ export function DashboardHomePage({ user }: Props) {
 
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             {isCointra && <StatCard title="Viajes conciliados" value={String(data.kpis.viajes_conciliados)} />}
-            <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" />
-            <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" />
-            <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" />
-            <StatCard title="Conciliaciones devueltas" value={String(data.kpis.conc_devuelta)} hint="Con devolución registrada" />
-            <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Con marca de facturación" />
+            <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones devueltas" value={String(data.kpis.conc_devuelta)} hint="Con devolución registrada" tone="devuelta" onClick={goToConciliacionesList} />
+            <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Con marca de facturación" tone="facturar" onClick={goToConciliacionesList} />
           </section>
 
           <section className="grid gap-4 lg:grid-cols-3">
