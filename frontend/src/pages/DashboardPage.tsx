@@ -244,7 +244,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     activo: "",
     conciliacion: "",
   });
-  const [filtroEstadoConciliacion, setFiltroEstadoConciliacion] = useState<"TODOS" | "BORRADOR" | "EN_REVISION" | "APROBADA" | "ENVIADA_A_FACTURAR">("TODOS");
+  const [filtroEstadoConciliacion, setFiltroEstadoConciliacion] = useState<"TODOS" | "BORRADOR" | "EN_REVISION" | "APROBADA" | "ENVIADA_A_FACTURAR" | "FACTURADO">("TODOS");
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState("");
   const [highlightSelectedConciliacion, setHighlightSelectedConciliacion] = useState(false);
   const [clientItemSelections, setClientItemSelections] = useState<Record<number, boolean>>({});
@@ -255,11 +255,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     enviarCorreo: boolean;
     destinatario: string;
     mensaje: string;
+    poNumero: string;
   } | null>(null);
   const [facturacionPanelOpen, setFacturacionPanelOpen] = useState(false);
   const [facturacionRecipient, setFacturacionRecipient] = useState("");
   const [facturacionMessage, setFacturacionMessage] = useState("");
   const [facturacionError, setFacturacionError] = useState("");
+  const [facturaClientePanelOpen, setFacturaClientePanelOpen] = useState(false);
+  const [facturaClienteRecipient, setFacturaClienteRecipient] = useState("");
+  const [facturaClienteMessage, setFacturaClienteMessage] = useState("");
+  const [facturaClienteFile, setFacturaClienteFile] = useState<File | null>(null);
+  const [isSendingFacturaCliente, setIsSendingFacturaCliente] = useState(false);
+  const [facturaClienteError, setFacturaClienteError] = useState("");
   const [isSendingReview, setIsSendingReview] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [isSendingFacturacion, setIsSendingFacturacion] = useState(false);
@@ -462,6 +469,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       EN_REVISION: 0,
       APROBADA: 0,
       ENVIADA_A_FACTURAR: 0,
+      FACTURADO: 0,
     };
     for (const conciliacion of conciliaciones) {
       const estado = getConciliacionEstadoLabel(conciliacion);
@@ -469,6 +477,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       if (estado === "EN_REVISION") counts.EN_REVISION += 1;
       if (estado === "APROBADA") counts.APROBADA += 1;
       if (estado === "ENVIADA_A_FACTURAR") counts.ENVIADA_A_FACTURAR += 1;
+      if (estado === "FACTURADO") counts.FACTURADO += 1;
     }
     return counts;
   }, [conciliaciones]);
@@ -653,6 +662,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   }
 
   function getConciliacionEstadoLabel(conciliacion: Conciliacion): string {
+    if (conciliacion.factura_cliente_enviada && conciliacion.estado === "CERRADA") return "FACTURADO";
     if (conciliacion.enviada_facturacion && conciliacion.estado === "APROBADA") return "ENVIADA_A_FACTURAR";
     return conciliacion.estado;
   }
@@ -663,7 +673,33 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (estado === "EN_REVISION") return "bg-amber-50 text-amber-800 ring-1 ring-amber-200";
     if (estado === "APROBADA") return "bg-teal-50 text-teal-800 ring-1 ring-teal-200";
     if (estado === "ENVIADA_A_FACTURAR") return "bg-sky-50 text-sky-800 ring-1 ring-sky-200";
+    if (estado === "FACTURADO") return "bg-lime-50 text-lime-800 ring-1 ring-lime-200";
     return "bg-lime-50 text-lime-800 ring-1 ring-lime-200";
+  }
+
+  function getConciliacionValorCell(conciliacion: Conciliacion): string {
+    const valorCliente = Number(conciliacion.valor_cliente ?? 0);
+    const valorTercero = Number(conciliacion.valor_tercero ?? 0);
+    const ganancia = valorCliente - valorTercero;
+    if (user.rol === "CLIENTE") return formatCOP(valorCliente);
+    if (user.rol === "TERCERO") return formatCOP(valorTercero);
+    return `Cliente: ${formatCOP(valorCliente)} | Tercero: ${formatCOP(valorTercero)} | Ganancia: ${formatCOP(ganancia)}`;
+  }
+
+  function formatTimelineDate(value?: string | null): string {
+    if (!value) return "-";
+    const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString("es-CO", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "America/Bogota",
+    });
   }
 
   async function loadViajes() {
@@ -836,6 +872,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       });
       setTarifaLookup(null);
       await loadViajes();
+      setSaveResultModal({
+        title: "Servicio cargado",
+        description: "El servicio se registró correctamente.",
+      });
     } catch (e) {
       setError(toSpanishError(e));
     }
@@ -1052,22 +1092,56 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   async function asociarManifiestoLiquidacion() {
     if (!selected) return;
-    const value = liquidacionManifiestoInput.trim();
-    if (!value) return;
+    const rawInput = liquidacionManifiestoInput.trim();
+    if (!rawInput) return;
 
     setError("");
     setLiquidacionManifiestoError("");
     setSavingManifiesto(true);
     try {
-      await api.asociarManifiestoConciliacion(
-        selected.id,
-        value,
-        "LIQUIDACION_CONTRATO_FIJO"
+      const tokens = Array.from(
+        new Set(
+          rawInput
+            .split(/[\s,;]+/)
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+        )
       );
+      if (tokens.length === 0) {
+        setLiquidacionManifiestoError("No se detectaron manifiestos válidos para asociar.");
+        liquidacionManifiestoInputRef.current?.focus();
+        return;
+      }
+
+      const failed: string[] = [];
+      let asociados = 0;
+      for (const raw of tokens) {
+        const normalized = raw.startsWith("0") ? raw : `0${raw}`;
+        try {
+          await api.asociarManifiestoConciliacion(
+            selected.id,
+            normalized,
+            "LIQUIDACION_CONTRATO_FIJO"
+          );
+          asociados += 1;
+        } catch (e) {
+          failed.push(`${normalized}: ${toSpanishError(e)}`);
+        }
+      }
+
       const manifests = await api.manifiestosConciliacion(selected.id, "LIQUIDACION_CONTRATO_FIJO");
       setLiquidacionManifiestos(manifests);
-      setLiquidacionManifiestoInput("");
-      setLiquidacionManifiestoError("");
+      if (failed.length === 0) {
+        setLiquidacionManifiestoInput("");
+        setLiquidacionManifiestoError("");
+      } else {
+        const failedIds = failed.map((row) => row.split(":")[0]);
+        setLiquidacionManifiestoInput(failedIds.join(" "));
+        setLiquidacionManifiestoError(
+          `Se asociaron ${asociados} de ${tokens.length} manifiestos.\nNo se pudieron asociar:\n${failed.join("\n")}`
+        );
+        liquidacionManifiestoInputRef.current?.focus();
+      }
       await onRefreshConciliaciones();
     } catch (e) {
       const detail = toSpanishError(e);
@@ -1080,18 +1154,52 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   async function asociarManifiestoConciliacion() {
     if (!selected) return;
-    const value = conciliacionManifiestoInput.trim();
-    if (!value) return;
+    const rawInput = conciliacionManifiestoInput.trim();
+    if (!rawInput) return;
 
     setError("");
     setConciliacionManifiestoError("");
     setSavingManifiesto(true);
     try {
-      await api.asociarManifiestoConciliacion(selected.id, value, "CONCILIACION");
+      const tokens = Array.from(
+        new Set(
+          rawInput
+            .split(/[\s,;]+/)
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+        )
+      );
+      if (tokens.length === 0) {
+        setConciliacionManifiestoError("No se detectaron manifiestos válidos para asociar.");
+        conciliacionManifiestoInputRef.current?.focus();
+        return;
+      }
+
+      const failed: string[] = [];
+      let asociados = 0;
+      for (const raw of tokens) {
+        const normalized = raw.startsWith("0") ? raw : `0${raw}`;
+        try {
+          await api.asociarManifiestoConciliacion(selected.id, normalized, "CONCILIACION");
+          asociados += 1;
+        } catch (e) {
+          failed.push(`${normalized}: ${toSpanishError(e)}`);
+        }
+      }
+
       const manifests = await api.manifiestosConciliacion(selected.id, "CONCILIACION");
       setConciliacionManifiestos(manifests);
-      setConciliacionManifiestoInput("");
-      setConciliacionManifiestoError("");
+      if (failed.length === 0) {
+        setConciliacionManifiestoInput("");
+        setConciliacionManifiestoError("");
+      } else {
+        const failedIds = failed.map((row) => row.split(":")[0]);
+        setConciliacionManifiestoInput(failedIds.join(" "));
+        setConciliacionManifiestoError(
+          `Se asociaron ${asociados} de ${tokens.length} manifiestos.\nNo se pudieron asociar:\n${failed.join("\n")}`
+        );
+        conciliacionManifiestoInputRef.current?.focus();
+      }
       await onRefreshConciliaciones();
     } catch (e) {
       const detail = toSpanishError(e);
@@ -1282,6 +1390,21 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return;
     }
 
+    if (shouldApproveAll && !clientDecisionModal.enviarCorreo) {
+      setClientDecisionError("Al aprobar la conciliación es obligatorio enviar el correo de autorización.");
+      return;
+    }
+
+    if (shouldApproveAll && !clientDecisionModal.destinatario.trim()) {
+      setClientDecisionError("Debes indicar el correo destinatario para la autorización.");
+      return;
+    }
+
+    if (shouldApproveAll && clientDecisionModal.enviarCorreo && !clientDecisionModal.poNumero.trim()) {
+      setClientDecisionError("Debes registrar el número de PO para autorizar y notificar la conciliación.");
+      return;
+    }
+
     setClientDecisionError("");
     try {
       for (const item of itemsClienteRevision) {
@@ -1304,6 +1427,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         mensaje:
           clientDecisionModal.enviarCorreo && clientDecisionModal.mensaje.trim()
             ? clientDecisionModal.mensaje.trim()
+            : undefined,
+        po_numero:
+          shouldApproveAll && clientDecisionModal.poNumero.trim()
+            ? clientDecisionModal.poNumero.trim()
             : undefined,
       };
 
@@ -1348,6 +1475,39 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     }
   }
 
+  async function sendFacturaToCliente() {
+    if (!selected || user.rol !== "COINTRA") return;
+    if (!facturaClienteFile) {
+      setFacturaClienteError("Debes adjuntar el PDF de la factura.");
+      return;
+    }
+    if (!facturaClienteFile.name.toLowerCase().endsWith(".pdf")) {
+      setFacturaClienteError("El archivo adjunto debe estar en formato PDF.");
+      return;
+    }
+
+    setFacturaClienteError("");
+    setIsSendingFacturaCliente(true);
+    try {
+      await api.enviarFacturaClienteConciliacion(selected.id, {
+        destinatario_email: facturaClienteRecipient || undefined,
+        mensaje: facturaClienteMessage || undefined,
+        archivo_factura: facturaClienteFile,
+      });
+      await onRefreshConciliaciones();
+      await loadItems(selected.id);
+      setFacturaClientePanelOpen(false);
+      setFacturaClienteRecipient("");
+      setFacturaClienteMessage("");
+      setFacturaClienteFile(null);
+      setReviewSuccessMessage("Factura enviada al cliente con PDF adjunto. La conciliación quedó en estado FACTURADO.");
+    } catch (e) {
+      setFacturaClienteError(toSpanishError(e));
+    } finally {
+      setIsSendingFacturaCliente(false);
+    }
+  }
+
   async function patchItemAndSync(
     itemId: number,
     payload: {
@@ -1387,37 +1547,32 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   return (
     <div className="space-y-6">
-      <section className="flex items-center gap-3 rounded-xl border border-border bg-white/90 p-2 shadow-sm">
-        <button
-          className={`inline-flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition ${
-            activeModule === "viajes"
-              ? "bg-primary text-white shadow-sm"
-              : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-          }`}
-          onClick={() => {
-            setActiveModule("viajes");
-            void loadViajes();
-          }}
-        >
-          Modulo Viajes/Adicionales
-        </button>
-        <button
-          className={`inline-flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition ${
-            activeModule === "conciliaciones"
-              ? "bg-primary text-white shadow-sm"
-              : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-          }`}
-          onClick={() => setActiveModule("conciliaciones")}
-        >
-          Modulo Conciliaciones
-        </button>
-      </section>
-
       {activeModule === "viajes" && (
         <>
-          <div className="grid gap-6">
-            {user.rol !== "CLIENTE" && (
-            <section className="min-w-0 rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+          <section className="w-full rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-white/90 p-2 shadow-sm">
+              <button
+                className={`inline-flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  activeModule === "viajes"
+                    ? "bg-primary text-white shadow-sm"
+                    : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                }`}
+                onClick={() => {
+                  setActiveModule("viajes");
+                  void loadViajes();
+                }}
+              >
+                Modulo Viajes/Adicionales
+              </button>
+              <button
+                className="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                onClick={() => setActiveModule("conciliaciones")}
+              >
+                Modulo Conciliaciones
+              </button>
+            </div>
+            {user.rol !== "CLIENTE" ? (
+            <div className="min-w-0">
               <h3 className="mb-4 text-sm font-semibold text-slate-900">Cargar viaje/adicional</h3>
               <form
                 onSubmit={async (e: FormEvent<HTMLFormElement>) => {
@@ -1709,10 +1864,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   Guardar servicio
                 </button>
               </form>
-            </section>
+            </div>
+            ) : (
+              <p className="text-sm text-neutral">Selecciona el módulo y consulta el listado de servicios en el contenedor inferior.</p>
             )}
+          </section>
 
-            <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none">
+            <section className="w-full rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900">Servicios cargados</h3>
                 <div className="flex flex-1 items-center justify-end gap-2">
@@ -1966,15 +2124,35 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 </table>
               </div>
             </section>
-          </div>
         </>
       )}
 
       {activeModule === "conciliaciones" && (
         <>
-          <div className="grid gap-6">
-            {user.rol === "COINTRA" && (
-              <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+          <section className="w-full rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-white/90 p-2 shadow-sm">
+              <button
+                className="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                onClick={() => {
+                  setActiveModule("viajes");
+                  void loadViajes();
+                }}
+              >
+                Modulo Viajes/Adicionales
+              </button>
+              <button
+                className={`inline-flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  activeModule === "conciliaciones"
+                    ? "bg-primary text-white shadow-sm"
+                    : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+                }`}
+                onClick={() => setActiveModule("conciliaciones")}
+              >
+                Modulo Conciliaciones
+              </button>
+            </div>
+            {user.rol === "COINTRA" ? (
+              <div>
                 <h3 className="mb-4 text-sm font-semibold text-slate-900">Nueva conciliación</h3>
                 <form
                   onSubmit={async (e: FormEvent<HTMLFormElement>) => {
@@ -2048,14 +2226,17 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     Crear
                   </button>
                 </form>
-              </section>
+              </div>
+            ) : (
+              <p className="text-sm text-neutral">Selecciona una conciliación desde el listado inferior para revisar su detalle.</p>
             )}
+          </section>
 
             <section
               id="lista-conciliaciones"
               ref={conciliacionesListRef}
               tabIndex={-1}
-              className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none"
+              className="w-full rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none"
             >
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900">Conciliaciones</h3>
@@ -2066,6 +2247,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     ["EN_REVISION", `En revisión (${conciliacionStatusCounts.EN_REVISION})`],
                     ["APROBADA", `Aprobada (${conciliacionStatusCounts.APROBADA})`],
                     ["ENVIADA_A_FACTURAR", `Enviada a facturar (${conciliacionStatusCounts.ENVIADA_A_FACTURAR})`],
+                    ["FACTURADO", `Facturado (${conciliacionStatusCounts.FACTURADO})`],
                   ].map(([value, label]) => (
                     <button
                       key={value}
@@ -2073,6 +2255,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       onClick={() =>
                         setFiltroEstadoConciliacion(
                           value as "TODOS" | "BORRADOR" | "EN_REVISION" | "APROBADA" | "ENVIADA_A_FACTURAR"
+                          | "FACTURADO"
                         )
                       }
                       className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
@@ -2151,6 +2334,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       <th className="border-b border-border px-3 py-2 text-left">Tercero</th>
                       <th className="border-b border-border px-3 py-2 text-left">Creada por</th>
                       <th className="border-b border-border px-3 py-2 text-left">Estado</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Valor</th>
                       <th className="border-b border-border px-3 py-2 text-left">Usuario estado</th>
                       <th className="border-b border-border px-3 py-2 text-left">Periodo</th>
                       <th className="border-b border-border px-3 py-2 text-left">Creada</th>
@@ -2174,6 +2358,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             {getConciliacionEstadoLabel(c).toUpperCase()}
                           </span>
                         </td>
+                        <td className="px-3 py-2">{getConciliacionValorCell(c)}</td>
                         <td className="px-3 py-2">{c.estado_actualizado_por_nombre ?? "-"}</td>
                         <td className="px-3 py-2">
                           {c.fecha_inicio} - {c.fecha_fin}
@@ -2226,12 +2411,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 </table>
               </div>
             </section>
-          </div>
 
       {selected && (
         <section
           ref={selectedConciliacionRef}
-          className={`space-y-6 rounded-2xl border bg-white/90 p-5 shadow-sm transition-all duration-300 ${
+          className={`w-full space-y-6 rounded-2xl border bg-white/90 p-5 shadow-sm transition-all duration-300 ${
             highlightSelectedConciliacion ? "border-emerald-300 ring-4 ring-emerald-100" : "border-border"
           }`}
         >
@@ -2256,6 +2440,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               <p className="mt-1 text-sm text-slate-700">
                 Estado actualizado por: {selected.estado_actualizado_por_nombre ?? "-"}
               </p>
+              <div className="mt-3 grid gap-2 text-xs text-slate-700 md:grid-cols-2 xl:grid-cols-6">
+                <p><span className="font-semibold">Creada:</span> {formatTimelineDate(selected.fecha_creacion ?? selected.created_at)}</p>
+                <p><span className="font-semibold">Enviada a revisión:</span> {formatTimelineDate(selected.fecha_envio_revision)}</p>
+                <p><span className="font-semibold">Aprobada:</span> {formatTimelineDate(selected.fecha_aprobacion)}</p>
+                <p><span className="font-semibold">Rechazada:</span> {formatTimelineDate(selected.fecha_rechazo)}</p>
+                <p><span className="font-semibold">Enviada a facturar:</span> {formatTimelineDate(selected.fecha_envio_facturacion)}</p>
+                <p><span className="font-semibold">Facturada:</span> {formatTimelineDate(selected.fecha_facturado)}</p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -2520,7 +2712,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           <thead>
                             <tr className="bg-indigo-50 text-indigo-900">
                               {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
-                                <th className="border-b border-indigo-100 px-2 py-1 text-center">
+                                <th className="border-b border-indigo-100 px-2 py-1 text-left">
                                   <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-indigo-900">
                                     <input
                                       type="checkbox"
@@ -2541,17 +2733,17 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                   </label>
                                 </th>
                               )}
-                              <th className="border-b border-indigo-100 px-2 py-1 text-center">Placa</th>
-                              <th className="border-b border-indigo-100 px-2 py-1 text-center">Tipo</th>
-                              <th className="border-b border-indigo-100 px-2 py-1 text-center">Estado</th>
+                              <th className="border-b border-indigo-100 px-2 py-1 text-left">Placa</th>
+                              <th className="border-b border-indigo-100 px-2 py-1 text-left">Tipo</th>
+                              <th className="border-b border-indigo-100 px-2 py-1 text-left">Estado</th>
                               {user.rol !== "CLIENTE" && (
-                                <th className="border-b border-indigo-100 px-2 py-1 text-center">Valor tercero</th>
+                                <th className="border-b border-indigo-100 px-2 py-1 text-left">Valor tercero</th>
                               )}
                               {user.rol !== "TERCERO" && (
-                                <th className="border-b border-indigo-100 px-2 py-1 text-center">Valor cliente</th>
+                                <th className="border-b border-indigo-100 px-2 py-1 text-left">Valor cliente</th>
                               )}
                               {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                                <th className="border-b border-indigo-100 px-2 py-1 text-center">Acción</th>
+                                <th className="border-b border-indigo-100 px-2 py-1 text-left">Acción</th>
                               )}
                             </tr>
                           </thead>
@@ -2769,7 +2961,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                               setLiquidacionManifiestoInput(e.target.value);
                               if (liquidacionManifiestoError) setLiquidacionManifiestoError("");
                             }}
-                            placeholder="Escribe manifiesto..."
+                            placeholder="Pega manifiestos separados por espacio (ej: 12345 67890 54321)"
                             className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                           />
                           <button
@@ -2781,8 +2973,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             Asociar
                           </button>
                         </div>
+                        <p className="text-[11px] text-neutral">El sistema agrega automáticamente un cero al inicio de cada manifiesto.</p>
                         {liquidacionManifiestoError && (
-                          <p className="text-xs font-medium text-danger">{liquidacionManifiestoError}</p>
+                          <p className="whitespace-pre-line text-xs font-medium text-danger">{liquidacionManifiestoError}</p>
                         )}
                       </div>
                     )}
@@ -2868,11 +3061,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                           Mensaje
                         </label>
-                        <input
+                        <textarea
                           value={reviewMessage}
                           onChange={(e) => setReviewMessage(e.target.value)}
                           placeholder="Mensaje para el cliente"
-                          className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                          className="min-h-24 w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                         />
                       </div>
                       <div className="flex items-end">
@@ -2944,11 +3137,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                           Mensaje
                         </label>
-                        <input
+                        <textarea
                           value={facturacionMessage}
                           onChange={(e) => setFacturacionMessage(e.target.value)}
                           placeholder="Mensaje interno para facturación"
-                          className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                          className="min-h-24 w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                         />
                       </div>
                       <div className="flex items-end">
@@ -2993,6 +3186,83 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               )}
             </div>
           )}
+          {user.rol === "COINTRA" && getConciliacionEstadoLabel(selected) === "ENVIADA_A_FACTURAR" && !selected.factura_cliente_enviada && (
+            <div className="rounded-xl border border-lime-200 bg-lime-50/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Enviar factura al cliente</p>
+                  <p className="text-xs text-neutral">
+                    Adjunta el PDF de la factura para el cliente. Al enviar, la conciliación pasa a FACTURADO y se cierra el ciclo.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFacturaClientePanelOpen((prev) => !prev)}
+                  className="inline-flex items-center rounded-full bg-lime-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-lime-800"
+                >
+                  Enviar factura cliente
+                </button>
+              </div>
+              {facturaClientePanelOpen && (
+                <div className="mt-3 space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                        Correos de destino
+                      </label>
+                      <input
+                        type="text"
+                        value={facturaClienteRecipient}
+                        onChange={(e) => setFacturaClienteRecipient(e.target.value)}
+                        placeholder="correo1@empresa.com; correo2@empresa.com"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                      Mensaje
+                    </label>
+                    <textarea
+                      value={facturaClienteMessage}
+                      onChange={(e) => setFacturaClienteMessage(e.target.value)}
+                      placeholder="Mensaje para cliente"
+                      className="min-h-24 w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                      PDF factura
+                    </label>
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      onChange={(e) => setFacturaClienteFile(e.target.files?.[0] ?? null)}
+                      className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none file:mr-3 file:rounded-md file:border-0 file:bg-lime-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-lime-800"
+                    />
+                    {facturaClienteFile && (
+                      <p className="mt-1 text-[11px] text-slate-700">Adjunto: {facturaClienteFile.name}</p>
+                    )}
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void sendFacturaToCliente()}
+                      disabled={isSendingFacturaCliente}
+                      className="rounded-lg bg-lime-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-lime-800 disabled:opacity-60"
+                    >
+                      {isSendingFacturaCliente ? "Enviando..." : "Confirmar envío"}
+                    </button>
+                  </div>
+                  {facturaClienteError && (
+                    <p className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm font-medium text-danger">
+                      {facturaClienteError}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {loadingItems ? (
             <p className="text-sm text-neutral">Cargando items...</p>
           ) : (
@@ -3002,15 +3272,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 <table className="min-w-full border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-neutral">
-                      <th className="border-b border-border px-3 py-2 text-center">ID</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Tipo</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Estado</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Fecha</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Origen</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Destino</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Placa</th>
+                      <th className="border-b border-border px-3 py-2 text-left">ID</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Tipo</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Estado</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Fecha</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Origen</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Destino</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Placa</th>
                       {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
-                        <th className="border-b border-border px-3 py-2 text-center">
+                        <th className="border-b border-border px-3 py-2 text-left">
                           <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-slate-700">
                             <input
                               type="checkbox"
@@ -3032,19 +3302,19 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         </th>
                       )}
                       {user.rol !== "CLIENTE" && (
-                        <th className="border-b border-border px-3 py-2 text-center">Tarifa Tercero</th>
+                        <th className="border-b border-border px-3 py-2 text-left">Tarifa Tercero</th>
                       )}
                       {user.rol !== "TERCERO" && (
-                        <th className="border-b border-border px-3 py-2 text-center">Tarifa Cliente</th>
+                        <th className="border-b border-border px-3 py-2 text-left">Tarifa Cliente</th>
                       )}
                       {user.rol === "COINTRA" && (
-                        <th className="border-b border-border px-3 py-2 text-center">Ganancia Cointra</th>
+                        <th className="border-b border-border px-3 py-2 text-left">Ganancia Cointra</th>
                       )}
                       {user.rol === "COINTRA" && (
-                        <th className="border-b border-border px-3 py-2 text-center">Rentabilidad %</th>
+                        <th className="border-b border-border px-3 py-2 text-left">Rentabilidad %</th>
                       )}
                       {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                        <th className="border-b border-border px-3 py-2 text-center">Acciones</th>
+                        <th className="border-b border-border px-3 py-2 text-left">Acciones</th>
                       )}
                     </tr>
                   </thead>
@@ -3239,9 +3509,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       setClientDecisionModal({
                         action: "aprobar",
                         observacion: "",
-                        enviarCorreo: false,
+                        enviarCorreo: true,
                         destinatario: suggestedClientReplyRecipient,
                         mensaje: "",
+                        poNumero: "",
                       })
                     }
                     onMouseDown={() => setClientDecisionError("")}
@@ -3258,6 +3529,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         enviarCorreo: true,
                         destinatario: suggestedClientReplyRecipient,
                         mensaje: "",
+                        poNumero: "",
                       })
                     }
                     onMouseDown={() => setClientDecisionError("")}
@@ -3314,7 +3586,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           setConciliacionManifiestoInput(e.target.value);
                           if (conciliacionManifiestoError) setConciliacionManifiestoError("");
                         }}
-                        placeholder="Escribe manifiesto para conciliación..."
+                        placeholder="Pega manifiestos separados por espacio (ej: 12345 67890 54321)"
                         className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                       />
                       <button
@@ -3326,8 +3598,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         Asociar
                       </button>
                     </div>
+                    <p className="text-[11px] text-neutral">El sistema agrega automáticamente un cero al inicio de cada manifiesto.</p>
                     {conciliacionManifiestoError && (
-                      <p className="text-xs font-medium text-danger">{conciliacionManifiestoError}</p>
+                      <p className="whitespace-pre-line text-xs font-medium text-danger">{conciliacionManifiestoError}</p>
                     )}
                   </div>
                 )}
@@ -3471,19 +3744,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
           />
         )}
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={!!clientDecisionModal?.enviarCorreo}
-            onChange={(e) =>
-              setClientDecisionModal((prev) =>
-                prev ? { ...prev, enviarCorreo: e.target.checked } : prev
-              )
-            }
-            className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
-          />
-          Notificar por correo esta novedad
-        </label>
+        {clientDecisionModal?.action === "aprobar" ? (
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            El envío de correo es obligatorio al autorizar la conciliación.
+          </p>
+        ) : (
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={!!clientDecisionModal?.enviarCorreo}
+              onChange={(e) =>
+                setClientDecisionModal((prev) =>
+                  prev ? { ...prev, enviarCorreo: e.target.checked } : prev
+                )
+              }
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+            />
+            Notificar por correo esta novedad
+          </label>
+        )}
 
         {clientDecisionModal?.enviarCorreo && (
           <>
@@ -3497,7 +3776,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               placeholder="Correos destinatario (opcional): correo1@empresa.com; correo2@empresa.com"
               className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
             />
-            <input
+            <textarea
               value={clientDecisionModal.mensaje}
               onChange={(e) =>
                 setClientDecisionModal((prev) =>
@@ -3505,8 +3784,20 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 )
               }
               placeholder="Mensaje de correo (opcional)"
-              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+              className="min-h-24 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
             />
+            {clientDecisionModal.action === "aprobar" && (
+              <input
+                value={clientDecisionModal.poNumero}
+                onChange={(e) =>
+                  setClientDecisionModal((prev) =>
+                    prev ? { ...prev, poNumero: e.target.value } : prev
+                  )
+                }
+                placeholder="Número de PO de autorización"
+                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+              />
+            )}
             <p className="text-[11px] text-neutral">Puedes ingresar múltiples correos separados por coma o punto y coma.</p>
           </>
         )}

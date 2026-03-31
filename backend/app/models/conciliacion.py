@@ -19,6 +19,8 @@ class Conciliacion(Base):
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     borrador_guardado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     enviada_facturacion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    factura_cliente_enviada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    po_numero_autorizacion: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

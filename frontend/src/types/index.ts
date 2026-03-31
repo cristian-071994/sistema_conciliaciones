@@ -57,6 +57,8 @@ export interface Conciliacion {
   activo: boolean;
   borrador_guardado: boolean;
   enviada_facturacion: boolean;
+  factura_cliente_enviada: boolean;
+  po_numero_autorizacion?: string | null;
   created_by: number;
   created_at: string;
   creador_nombre?: string | null;
@@ -64,6 +66,14 @@ export interface Conciliacion {
   tercero_nombre?: string | null;
   estado_actualizado_por_nombre?: string | null;
   estado_actualizado_por_email?: string | null;
+  valor_cliente?: number | null;
+  valor_tercero?: number | null;
+  fecha_creacion?: string | null;
+  fecha_envio_revision?: string | null;
+  fecha_aprobacion?: string | null;
+  fecha_rechazo?: string | null;
+  fecha_envio_facturacion?: string | null;
+  fecha_facturado?: string | null;
 }
 
 export interface ConciliacionManifiesto {
@@ -278,6 +288,7 @@ export interface DashboardKpis {
   conc_aprobada: number;
   conc_devuelta: number;
   conc_enviada_facturar: number;
+  conc_facturada: number;
 }
 
 export interface DashboardLabelValue {

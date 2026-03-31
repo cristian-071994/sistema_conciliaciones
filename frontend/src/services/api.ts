@@ -339,7 +339,7 @@ export const api = {
     }),
   aprobarConciliacionCliente: (
     conciliacionId: number,
-    payload: { observacion?: string; destinatario_email?: string; mensaje?: string }
+    payload: { observacion?: string; destinatario_email?: string; mensaje?: string; po_numero?: string }
   ) =>
     request<Conciliacion>(`/conciliaciones/${conciliacionId}/aprobar-cliente`, {
       method: "POST",
@@ -361,6 +361,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  enviarFacturaClienteConciliacion: async (
+    conciliacionId: number,
+    payload: {
+      destinatario_email?: string;
+      mensaje?: string;
+      archivo_factura: File;
+    }
+  ) => {
+    const token = localStorage.getItem("token");
+    const form = new FormData();
+    if (payload.destinatario_email) form.append("destinatario_email", payload.destinatario_email);
+    if (payload.mensaje) form.append("mensaje", payload.mensaje);
+    form.append("archivo_factura", payload.archivo_factura);
+
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await fetch(`${API_URL}/conciliaciones/${conciliacionId}/enviar-factura-cliente`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
+    if (!response.ok) {
+      const raw = await response.text();
+      if (response.status === 401 && unauthorizedHandler) {
+        unauthorizedHandler();
+      }
+      let message = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.detail === "string") {
+          message = parsed.detail;
+        }
+      } catch {
+        // fallback to raw text
+      }
+      throw new Error(message || "Error al enviar factura al cliente");
+    }
+    return response.json() as Promise<Conciliacion>;
+  },
   descargarConciliacionExcel: async (conciliacionId: number): Promise<Blob> => {
     const token = localStorage.getItem("token");
     const headers: Record<string, string> = {};

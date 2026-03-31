@@ -32,6 +32,12 @@ export function VehiculosPage({ user }: Props) {
     tipo_vehiculo_id: "",
     tercero_id: "",
   });
+  const [vehiculoFiltros, setVehiculoFiltros] = useState({
+    placa: "",
+    tipo: "",
+    propietario: "",
+    estado: "",
+  });
   const [tipoNombre, setTipoNombre] = useState("");
   const [confirmModal, setConfirmModal] = useState<
     | { type: "inactivarVehiculo" | "reactivarVehiculo"; id: number }
@@ -125,6 +131,22 @@ export function VehiculosPage({ user }: Props) {
 
   const tipoNombreById = new Map(tipos.map((t) => [t.id, t.nombre]));
   const terceroNombreById = new Map(terceros.map((t) => [t.id, t.nombre]));
+  const vehiculosFiltrados = useMemo(() => {
+    const includes = (value: string | null | undefined, needle: string) =>
+      !needle.trim() || (value || "").toLowerCase().includes(needle.trim().toLowerCase());
+
+    return vehiculos.filter((v) => {
+      const tipo = tipoNombreById.get(v.tipo_vehiculo_id) || "";
+      const propietario = (v.tercero_id ? terceroNombreById.get(v.tercero_id) : null) || v.propietario || "";
+      const estado = v.activo ? "ACTIVO" : "INACTIVO";
+      return (
+        includes(v.placa, vehiculoFiltros.placa) &&
+        includes(tipo, vehiculoFiltros.tipo) &&
+        includes(propietario, vehiculoFiltros.propietario) &&
+        includes(estado, vehiculoFiltros.estado)
+      );
+    });
+  }, [vehiculos, tipoNombreById, terceroNombreById, vehiculoFiltros]);
 
   return (
     <div className="space-y-6">
@@ -207,6 +229,42 @@ export function VehiculosPage({ user }: Props) {
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Vehículos registrados</h3>
         {!!error && <p className="mb-3 text-sm font-medium text-danger">{error}</p>}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+          <input
+            value={vehiculoFiltros.placa}
+            onChange={(e) => setVehiculoFiltros((prev) => ({ ...prev, placa: e.target.value }))}
+            placeholder="Filtrar placa"
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+          <input
+            value={vehiculoFiltros.tipo}
+            onChange={(e) => setVehiculoFiltros((prev) => ({ ...prev, tipo: e.target.value }))}
+            placeholder="Filtrar tipo"
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+          <input
+            value={vehiculoFiltros.propietario}
+            onChange={(e) => setVehiculoFiltros((prev) => ({ ...prev, propietario: e.target.value }))}
+            placeholder="Filtrar propietario"
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+          <select
+            value={vehiculoFiltros.estado}
+            onChange={(e) => setVehiculoFiltros((prev) => ({ ...prev, estado: e.target.value }))}
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          >
+            <option value="">Todos los estados</option>
+            <option value="ACTIVO">ACTIVO</option>
+            <option value="INACTIVO">INACTIVO</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setVehiculoFiltros({ placa: "", tipo: "", propietario: "", estado: "" })}
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+          >
+            Limpiar filtros
+          </button>
+        </div>
         {loading ? (
           <p className="text-sm text-neutral">Cargando vehículos...</p>
         ) : (
@@ -224,7 +282,7 @@ export function VehiculosPage({ user }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {vehiculos.map((v) => (
+                {vehiculosFiltrados.map((v) => (
                   <tr key={v.id} className="border-b border-border last:border-0">
                     <td className="px-3 py-2">{v.placa}</td>
                     <td className="px-3 py-2">{tipoNombreById.get(v.tipo_vehiculo_id) || "-"}</td>

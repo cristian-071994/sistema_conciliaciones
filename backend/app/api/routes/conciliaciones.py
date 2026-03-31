@@ -3,11 +3,12 @@ from io import BytesIO
 import json
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, is_cointra_admin
@@ -262,6 +263,8 @@ def _resolve_recipients(db: Session, operacion: Operacion, roles: list[UserRole]
 
 def _display_estado(conc: Conciliacion) -> str:
     estado = str(getattr(conc.estado, "value", conc.estado))
+    if estado == "CERRADA" and conc.factura_cliente_enviada:
+        return "FACTURADO"
     if estado == "APROBADA" and conc.enviada_facturacion:
         return "ENVIADA_A_FACTURAR"
     return estado
@@ -374,6 +377,10 @@ def _find_last_status_actor(db: Session, conc: Conciliacion) -> tuple[str | None
             return campo == "cierre_conciliacion" or (
                 campo == "estado_conciliacion" and nuevo == "CERRADA"
             )
+        if estado == "FACTURADO":
+            return campo == "envio_factura_cliente" or (
+                campo == "estado_conciliacion" and nuevo == "CERRADA"
+            )
         return campo == "estado_conciliacion" and nuevo == estado
 
     for log in logs:
@@ -388,7 +395,61 @@ def _find_last_status_actor(db: Session, conc: Conciliacion) -> tuple[str | None
     return creator_name, creator_email
 
 
-def _enrich_conciliacion(db: Session, conc: Conciliacion) -> dict:
+def _build_conciliacion_totals_map(db: Session, conciliacion_ids: list[int]) -> dict[int, tuple[float, float]]:
+    if not conciliacion_ids:
+        return {}
+    rows = (
+        db.query(
+            ConciliacionItem.conciliacion_id,
+            func.coalesce(func.sum(ConciliacionItem.tarifa_cliente), 0),
+            func.coalesce(func.sum(ConciliacionItem.tarifa_tercero), 0),
+        )
+        .filter(ConciliacionItem.conciliacion_id.in_(conciliacion_ids))
+        .group_by(ConciliacionItem.conciliacion_id)
+        .all()
+    )
+    return {
+        int(conciliacion_id): (float(total_cliente or 0), float(total_tercero or 0))
+        for conciliacion_id, total_cliente, total_tercero in rows
+    }
+
+
+def _build_conciliacion_estado_timestamps(db: Session, conciliacion_id: int, created_at: object) -> dict[str, object | None]:
+    logs = (
+        db.query(HistorialCambio)
+        .filter(HistorialCambio.conciliacion_id == conciliacion_id)
+        .order_by(HistorialCambio.id.asc())
+        .all()
+    )
+    timestamps: dict[str, object | None] = {
+        "fecha_creacion": created_at,
+        "fecha_envio_revision": None,
+        "fecha_aprobacion": None,
+        "fecha_rechazo": None,
+        "fecha_envio_facturacion": None,
+        "fecha_facturado": None,
+    }
+    for log in logs:
+        campo = (log.campo or "").strip()
+        if campo == "enviar_revision" and timestamps["fecha_envio_revision"] is None:
+            timestamps["fecha_envio_revision"] = log.fecha
+        elif campo == "aprobacion_cliente" and timestamps["fecha_aprobacion"] is None:
+            timestamps["fecha_aprobacion"] = log.fecha
+        elif campo == "devolucion_cliente" and timestamps["fecha_rechazo"] is None:
+            timestamps["fecha_rechazo"] = log.fecha
+        elif campo == "envio_facturacion" and timestamps["fecha_envio_facturacion"] is None:
+            timestamps["fecha_envio_facturacion"] = log.fecha
+        elif campo == "envio_factura_cliente" and timestamps["fecha_facturado"] is None:
+            timestamps["fecha_facturado"] = log.fecha
+    return timestamps
+
+
+def _enrich_conciliacion(
+    db: Session,
+    conc: Conciliacion,
+    user: Usuario,
+    totals_map: dict[int, tuple[float, float]] | None = None,
+) -> dict:
     """Convierte una Conciliacion ORM en dict con campos de creador, cliente y tercero."""
     base = ConciliacionOut.model_validate(conc).model_dump()
     base["creador_nombre"] = conc.creador.nombre if conc.creador else None
@@ -398,6 +459,24 @@ def _enrich_conciliacion(db: Session, conc: Conciliacion) -> dict:
     estado_actor_nombre, estado_actor_email = _find_last_status_actor(db, conc)
     base["estado_actualizado_por_nombre"] = estado_actor_nombre
     base["estado_actualizado_por_email"] = estado_actor_email
+    totals = (totals_map or {}).get(conc.id, (0.0, 0.0))
+    valor_cliente, valor_tercero = totals
+    if user.rol == UserRole.CLIENTE:
+        base["valor_cliente"] = valor_cliente
+        base["valor_tercero"] = None
+    elif user.rol == UserRole.TERCERO:
+        base["valor_cliente"] = None
+        base["valor_tercero"] = valor_tercero
+    else:
+        base["valor_cliente"] = valor_cliente
+        base["valor_tercero"] = valor_tercero
+    timestamps = _build_conciliacion_estado_timestamps(db, conc.id, conc.created_at)
+    base["fecha_creacion"] = timestamps["fecha_creacion"]
+    base["fecha_envio_revision"] = timestamps["fecha_envio_revision"]
+    base["fecha_aprobacion"] = timestamps["fecha_aprobacion"]
+    base["fecha_rechazo"] = timestamps["fecha_rechazo"]
+    base["fecha_envio_facturacion"] = timestamps["fecha_envio_facturacion"]
+    base["fecha_facturado"] = timestamps["fecha_facturado"]
     return base
 
 
@@ -1807,6 +1886,7 @@ def create_conciliacion(
         activo=True,
         borrador_guardado=False,
         enviada_facturacion=False,
+        factura_cliente_enviada=False,
         created_by=user.id,
     )
     db.add(conc)
@@ -1903,7 +1983,8 @@ def list_conciliaciones(db: Session = Depends(get_db), user: Usuario = Depends(g
     if not is_cointra_admin(user):
         query = query.filter(Conciliacion.activo.is_(True))
     concs = query.order_by(Conciliacion.id.desc()).all()
-    return [_enrich_conciliacion(db, c) for c in concs]
+    totals_map = _build_conciliacion_totals_map(db, [c.id for c in concs])
+    return [_enrich_conciliacion(db, c, user, totals_map) for c in concs]
 
 
 @router.get("/historial-cerradas", response_model=list[ConciliacionOut])
@@ -1943,7 +2024,8 @@ def list_closed_history(
     if fecha_fin:
         query = query.filter(Conciliacion.fecha_fin <= fecha_fin)
     concs = query.order_by(Conciliacion.id.desc()).all()
-    return [_enrich_conciliacion(db, c) for c in concs]
+    totals_map = _build_conciliacion_totals_map(db, [c.id for c in concs])
+    return [_enrich_conciliacion(db, c, user, totals_map) for c in concs]
 
 
 @router.patch("/{conciliacion_id}", response_model=ConciliacionOut)
@@ -2852,6 +2934,8 @@ def enviar_revision(
 
     conc.estado = "EN_REVISION"
     conc.enviada_facturacion = False
+    conc.factura_cliente_enviada = False
+    conc.po_numero_autorizacion = None
     _sync_viajes_conciliado_por_estado(db, conc.id, conc.estado)
 
     log_change(
@@ -2926,15 +3010,25 @@ def aprobar_conciliacion_cliente(
     if pendientes:
         raise HTTPException(status_code=400, detail="No se puede aprobar: existen items no aprobados")
 
+    po_numero = (payload.po_numero or "").strip()
+    if not po_numero:
+        raise HTTPException(status_code=400, detail="Debes registrar el número de PO para aprobar la conciliación")
+
     conc.estado = "APROBADA"
     conc.enviada_facturacion = False
+    conc.factura_cliente_enviada = False
+    conc.po_numero_autorizacion = po_numero
     _sync_viajes_conciliado_por_estado(db, conc.id, conc.estado)
+
     log_change(
         db,
         usuario_id=user.id,
         conciliacion_id=conc.id,
         campo="aprobacion_cliente",
-        valor_nuevo=payload.observacion or "aprobada por cliente",
+        valor_nuevo=(
+            f"{payload.observacion or 'aprobada por cliente'}"
+            + (f" | PO: {po_numero}" if po_numero else "")
+        ),
     )
     db.commit()
     db.refresh(conc)
@@ -2945,25 +3039,27 @@ def aprobar_conciliacion_cliente(
     preferred_cointra = [last_review_sender] if last_review_sender and last_review_sender.rol == UserRole.COINTRA else []
     email_recipients = preferred_cointra or cointra_recipients
     target_emails = _parse_target_emails(payload.destinatario_email, email_recipients)
+    if not target_emails:
+        raise HTTPException(status_code=400, detail="Debes indicar un destinatario de correo para confirmar la aprobación")
     notification_recipients = list(email_recipients)
     for tercero in tercero_recipients:
         if all(existing.id != tercero.id for existing in notification_recipients):
             notification_recipients.append(tercero)
-    if target_emails:
-        subject = f"Conciliacion aprobada: {conc.nombre}"
-        custom_message = payload.mensaje or ""
-        login_url = _login_url()
-        body = (
-            f"Hola,\n\n"
-            f"El cliente aprobo la conciliacion '{conc.nombre}'.\n"
-            f"Operacion: {operacion.nombre}\n"
-            f"Periodo: {conc.fecha_inicio} a {conc.fecha_fin}\n\n"
-            f"Enviado por: {_sender_signature(user)}\n\n"
-            f"Mensaje: {custom_message or '(sin mensaje)'}\n\n"
-            "Ingresa al sistema para continuar con el flujo.\n"
-            f"Accede aqui: {login_url}\n\n"
-        )
-        send_manual_email(target_emails, subject=subject, body=body)
+    subject = f"Conciliacion aprobada: {conc.nombre}"
+    custom_message = payload.mensaje or ""
+    login_url = _login_url()
+    body = (
+        f"Hola,\n\n"
+        f"El cliente aprobo la conciliacion '{conc.nombre}'.\n"
+        f"Operacion: {operacion.nombre}\n"
+        f"Periodo: {conc.fecha_inicio} a {conc.fecha_fin}\n\n"
+        f"PO autorizacion: {po_numero}\n\n"
+        f"Enviado por: {_sender_signature(user)}\n\n"
+        f"Mensaje: {custom_message or '(sin mensaje)'}\n\n"
+        "Ingresa al sistema para continuar con el flujo.\n"
+        f"Accede aqui: {login_url}\n\n"
+    )
+    send_manual_email(target_emails, subject=subject, body=body)
 
     create_internal_notifications(
         db,
@@ -3008,6 +3104,8 @@ def devolver_conciliacion_cliente(
 
     conc.estado = "BORRADOR"
     conc.enviada_facturacion = False
+    conc.factura_cliente_enviada = False
+    conc.po_numero_autorizacion = None
     _sync_viajes_conciliado_por_estado(db, conc.id, conc.estado)
     log_change(
         db,
@@ -3151,11 +3249,13 @@ def enviar_facturacion_conciliacion(
     )
     filename = f"conciliacion_{conc.id}_resumen.xlsx"
     custom_message = payload.mensaje or ""
+    po_numero = (conc.po_numero_autorizacion or "").strip()
     email_body = (
         f"Hola,\n\n"
         f"Se envio la conciliacion '{conc.nombre}' para facturacion.\n"
         f"Operacion: {operacion.nombre}\n"
         f"Periodo: {conc.fecha_inicio} a {conc.fecha_fin}\n\n"
+        f"PO autorizacion cliente: {po_numero or '(sin PO registrada)'}\n\n"
         f"Enviado por: {_sender_signature(user)}\n\n"
         f"Mensaje: {custom_message or '(sin mensaje)'}\n\n"
         "Adjunto encontraras el archivo Excel con los viajes.\n"
@@ -3195,6 +3295,107 @@ def enviar_facturacion_conciliacion(
         recipients,
         titulo="Conciliacion enviada a facturar",
         mensaje=f"La conciliacion '{conc.nombre}' fue enviada a facturacion con archivo Excel adjunto.",
+        tipo="FACTURACION",
+        conciliacion_id=conc.id,
+    )
+    db.commit()
+    return conc
+
+
+@router.post("/{conciliacion_id}/enviar-factura-cliente", response_model=ConciliacionOut)
+def enviar_factura_cliente_conciliacion(
+    conciliacion_id: int,
+    destinatario_email: str | None = Form(default=None),
+    mensaje: str | None = Form(default=None),
+    archivo_factura: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede enviar factura al cliente")
+
+    conc = db.get(Conciliacion, conciliacion_id)
+    if not conc:
+        raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
+
+    if conc.estado != "APROBADA" or not conc.enviada_facturacion:
+        raise HTTPException(
+            status_code=400,
+            detail="La conciliacion debe estar enviada a facturacion antes de enviar la factura al cliente",
+        )
+    if conc.factura_cliente_enviada:
+        raise HTTPException(status_code=400, detail="La factura ya fue enviada al cliente")
+
+    if not archivo_factura.filename:
+        raise HTTPException(status_code=400, detail="Debes adjuntar el archivo PDF de la factura")
+
+    filename = archivo_factura.filename.strip()
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="El archivo adjunto debe estar en formato PDF")
+
+    pdf_content = archivo_factura.file.read()
+    if not pdf_content:
+        raise HTTPException(status_code=400, detail="El archivo PDF adjunto esta vacio")
+
+    operacion = db.get(Operacion, conc.operacion_id)
+    _validate_user_access_operacion(user, operacion)
+
+    recipients = _resolve_recipients(db, operacion, [UserRole.CLIENTE])
+    target_emails = _parse_target_emails(destinatario_email, recipients)
+    notification_recipients = _users_matching_emails(recipients, target_emails) or recipients
+    if not target_emails:
+        raise HTTPException(status_code=400, detail="No hay correo destinatario para enviar la factura")
+
+    custom_message = (mensaje or "").strip()
+    login_url = _login_url()
+    body = (
+        f"Hola,\n\n"
+        f"Compartimos la factura en PDF de la conciliacion '{conc.nombre}' (#{conc.id}).\n"
+        f"Operacion: {operacion.nombre}\n"
+        f"Periodo: {conc.fecha_inicio} a {conc.fecha_fin}\n"
+        f"PO autorizacion: {conc.po_numero_autorizacion or '(sin PO reportada)'}\n\n"
+        f"Enviado por: {_sender_signature(user)}\n\n"
+        f"Mensaje: {custom_message or '(sin mensaje)'}\n\n"
+        "Adjunto encontraras la factura en formato PDF.\n"
+        f"Accede aqui: {login_url}\n\n"
+    )
+
+    send_result = send_manual_email(
+        target_emails,
+        subject=f"Factura conciliacion {conc.nombre} #{conc.id}",
+        body=body,
+        attachments=[
+            {
+                "filename": filename,
+                "content": pdf_content,
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+    if send_result["failed"] >= len(target_emails):
+        detail = "No se pudo enviar el correo de factura al cliente"
+        if send_result["errors"]:
+            detail = f"{detail}: {send_result['errors'][0]}"
+        raise HTTPException(status_code=502, detail=detail)
+
+    conc.estado = "CERRADA"
+    conc.factura_cliente_enviada = True
+    _sync_viajes_conciliado_por_estado(db, conc.id, conc.estado)
+    log_change(
+        db,
+        usuario_id=user.id,
+        conciliacion_id=conc.id,
+        campo="envio_factura_cliente",
+        valor_nuevo=f"destinatarios={', '.join(target_emails)}",
+    )
+    db.commit()
+    db.refresh(conc)
+
+    create_internal_notifications(
+        db,
+        notification_recipients,
+        titulo="Factura enviada al cliente",
+        mensaje=f"La conciliacion '{conc.nombre}' fue facturada y cerrada con PDF enviado al cliente.",
         tipo="FACTURACION",
         conciliacion_id=conc.id,
     )

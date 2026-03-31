@@ -95,7 +95,7 @@ export function DashboardHomePage({ user }: Props) {
     title: string;
     value: string;
     hint?: string;
-    tone?: "borrador" | "revision" | "aprobada" | "devuelta" | "servicios" | "conciliaciones" | "facturar";
+    tone?: "borrador" | "revision" | "aprobada" | "devuelta" | "servicios" | "conciliaciones" | "facturar" | "facturada";
     highlightBadge?: string;
     onClick?: () => void;
   }) {
@@ -114,6 +114,8 @@ export function DashboardHomePage({ user }: Props) {
                   ? "border-indigo-400 bg-gradient-to-br from-indigo-100 via-indigo-200 to-indigo-300 shadow-indigo-300/60"
                   : tone === "facturar"
                     ? "border-violet-400 bg-gradient-to-br from-violet-100 via-violet-200 to-violet-300 shadow-violet-300/60"
+                    : tone === "facturada"
+                      ? "border-fuchsia-400 bg-gradient-to-br from-fuchsia-100 via-fuchsia-200 to-fuchsia-300 shadow-fuchsia-300/60"
               : "border-emerald-100 bg-white";
 
     const titleClass = tone ? "text-slate-800" : "text-neutral";
@@ -160,6 +162,7 @@ export function DashboardHomePage({ user }: Props) {
     if (key === "APROBADA") return "from-emerald-500 to-emerald-600";
     if (key === "DEVUELTA") return "from-rose-500 to-rose-600";
     if (key === "ENVIADA A FACTURAR") return "from-violet-500 to-violet-600";
+    if (key === "FACTURADA") return "from-fuchsia-500 to-fuchsia-600";
     return "from-slate-500 to-slate-600";
   }
 
@@ -272,7 +275,7 @@ export function DashboardHomePage({ user }: Props) {
     const height = 320;
     const topPad = 20;
     const rightPad = 22;
-    const bottomPad = 64;
+    const bottomPad = 92;
     const leftPad = 52;
     const chartW = width - leftPad - rightPad;
     const chartH = height - topPad - bottomPad;
@@ -311,7 +314,16 @@ export function DashboardHomePage({ user }: Props) {
               <g key={`${row.label}-${idx}`}>
                 <title>{`${row.label} | ${legend}: ${formatCurrency(row.value)}`}</title>
                 <rect x={x} y={y} width={barW} height={Math.max(1, h)} rx={5} fill="#0ea5a4" fillOpacity="0.88" />
-                <text x={x + barW / 2} y={topPad + chartH + 16} textAnchor="middle" fontSize="10" fill="#475569">{label}</text>
+                <text
+                  x={x + barW / 2}
+                  y={topPad + chartH + 36}
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="#475569"
+                  transform={`rotate(-90 ${x + barW / 2} ${topPad + chartH + 36})`}
+                >
+                  {label}
+                </text>
               </g>
             );
           })}
@@ -338,7 +350,7 @@ export function DashboardHomePage({ user }: Props) {
     const height = 320;
     const topPad = 20;
     const rightPad = 22;
-    const bottomPad = 64;
+    const bottomPad = 92;
     const leftPad = 52;
     const chartW = width - leftPad - rightPad;
     const chartH = height - topPad - bottomPad;
@@ -400,7 +412,14 @@ export function DashboardHomePage({ user }: Props) {
                 <title>{tooltip}</title>
                 <rect x={baseX} y={ingresosY} width={barW} height={ingresosH} rx={4} fill="#10b981" fillOpacity="0.86" />
                 <rect x={baseX + barW + 6} y={costosY} width={barW} height={costosH} rx={4} fill="#f59e0b" fillOpacity="0.9" />
-                <text x={leftPad + idx * slot + slot / 2} y={topPad + chartH + 16} textAnchor="middle" fontSize="10" fill="#475569">
+                <text
+                  x={leftPad + idx * slot + slot / 2}
+                  y={topPad + chartH + 36}
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="#475569"
+                  transform={`rotate(-90 ${leftPad + idx * slot + slot / 2} ${topPad + chartH + 36})`}
+                >
                   {label}
                 </text>
               </g>
@@ -430,6 +449,7 @@ export function DashboardHomePage({ user }: Props) {
       { label: "Aprobada", value: data?.kpis.conc_aprobada ?? 0, tone: "from-emerald-500 to-emerald-600" },
       { label: "Devuelta", value: data?.kpis.conc_devuelta ?? 0, tone: "from-rose-500 to-rose-600" },
       { label: "Enviada a facturar", value: data?.kpis.conc_enviada_facturar ?? 0, tone: "from-violet-500 to-violet-600" },
+      { label: "Facturada", value: data?.kpis.conc_facturada ?? 0, tone: "from-fuchsia-500 to-fuchsia-600" },
     ];
     const max = Math.max(...steps.map((step) => step.value), 1);
 
@@ -848,6 +868,7 @@ export function DashboardHomePage({ user }: Props) {
             <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones devueltas" value={String(data.kpis.conc_devuelta)} hint="Con devolución registrada" tone="devuelta" onClick={goToConciliacionesList} />
             <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Con marca de facturación" tone="facturar" onClick={goToConciliacionesList} />
+            <StatCard title="Facturadas" value={String(data.kpis.conc_facturada)} hint="Factura enviada al cliente" tone="facturada" onClick={goToConciliacionesList} />
           </section>
 
           <section className="grid gap-4 lg:grid-cols-3">

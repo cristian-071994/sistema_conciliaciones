@@ -30,6 +30,7 @@ class ConciliacionWorkflowAction(BaseModel):
     observacion: str | None = None
     destinatario_email: str | None = None
     mensaje: str | None = None
+    po_numero: str | None = None
 
 
 class ConciliacionHistorialFilter(BaseModel):
@@ -49,6 +50,8 @@ class ConciliacionOut(ORMModel):
     activo: bool
     borrador_guardado: bool = False
     enviada_facturacion: bool = False
+    factura_cliente_enviada: bool = False
+    po_numero_autorizacion: str | None = None
     created_by: int
     created_at: datetime
     creador_nombre: str | None = None
@@ -56,6 +59,14 @@ class ConciliacionOut(ORMModel):
     tercero_nombre: str | None = None
     estado_actualizado_por_nombre: str | None = None
     estado_actualizado_por_email: str | None = None
+    valor_cliente: float | None = None
+    valor_tercero: float | None = None
+    fecha_creacion: datetime | None = None
+    fecha_envio_revision: datetime | None = None
+    fecha_aprobacion: datetime | None = None
+    fecha_rechazo: datetime | None = None
+    fecha_envio_facturacion: datetime | None = None
+    fecha_facturado: datetime | None = None
 
 
 class ConciliacionItemCreate(BaseModel):

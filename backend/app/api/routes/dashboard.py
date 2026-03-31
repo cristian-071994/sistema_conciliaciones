@@ -310,6 +310,7 @@ def _build_empty_payload(mode: str, start: date, end: date, period_label: str, p
             "conc_aprobada": 0,
             "conc_devuelta": 0,
             "conc_enviada_facturar": 0,
+            "conc_facturada": 0,
         },
         "charts": {
             "conciliaciones_estado": [],
@@ -415,11 +416,15 @@ def dashboard_indicadores(
     conc_aprobada = 0
     conc_devuelta = 0
     conc_enviada_facturar = 0
+    conc_facturada = 0
     for conc in concs:
         estado = _enum_text(conc.estado).upper()
 
         if conc.enviada_facturacion:
-            conc_enviada_facturar += 1
+            if bool(getattr(conc, "factura_cliente_enviada", False)):
+                conc_facturada += 1
+            else:
+                conc_enviada_facturar += 1
             continue
         if conc.id in devolucion_ids:
             conc_devuelta += 1
@@ -439,6 +444,7 @@ def dashboard_indicadores(
         "APROBADA": conc_aprobada,
         "DEVUELTA": conc_devuelta,
         "ENVIADA A FACTURAR": conc_enviada_facturar,
+        "FACTURADA": conc_facturada,
     }
 
     viajes_pendientes = 0
@@ -574,7 +580,7 @@ def dashboard_indicadores(
             "compare_end_date": prev_end.isoformat(),
         },
         "kpis": {
-            "conciliaciones": conc_borrador + conc_en_revision + conc_aprobada + conc_devuelta + conc_enviada_facturar,
+            "conciliaciones": conc_borrador + conc_en_revision + conc_aprobada + conc_devuelta + conc_enviada_facturar + conc_facturada,
             "servicios": int(summary["total_servicios"]),
             "manifiestos": len(manifests),
             "ingresos": summary["total_ingresos"],
@@ -593,6 +599,7 @@ def dashboard_indicadores(
             "conc_aprobada": conc_aprobada,
             "conc_devuelta": conc_devuelta,
             "conc_enviada_facturar": conc_enviada_facturar,
+            "conc_facturada": conc_facturada,
         },
         "charts": {
             "conciliaciones_estado": [
