@@ -5,7 +5,12 @@ class Settings(BaseSettings):
     app_name: str = "Sistema de Conciliacion Cointra"
     secret_key: str = "dev_secret_change_me"
     access_token_expire_minutes: int = 480
-    database_url: str = "sqlite:///./cointra.db"
+    database_url: str | None = None
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "sistema_conciliacion"
+    postgres_user: str = "postgres"
+    postgres_password: str = "postgres"
     cors_origins: str = "http://localhost:5173"
     frontend_url: str = "http://localhost:5173"
     password_reset_token_expire_minutes: int = 30
@@ -37,6 +42,17 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        # Priority: explicit DATABASE_URL for cloud/containers, otherwise compose from PG vars.
+        if self.database_url and self.database_url.strip():
+            return self.database_url.strip()
+        return (
+            "postgresql+psycopg://"
+            f"{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
 
 settings = Settings()

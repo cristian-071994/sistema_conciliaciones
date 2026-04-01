@@ -2,6 +2,7 @@
 
 ## Requisitos
 - Python 3.11+
+- PostgreSQL 14+
 
 ## Instalacion
 ```powershell
@@ -11,8 +12,33 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
+## Configuracion de base de datos (PostgreSQL)
+El backend usa PostgreSQL por defecto.
+
+Puedes configurar conexion de dos formas:
+
+1. `DATABASE_URL` completa (recomendada para Docker/cloud)
+2. Variables `POSTGRES_*` (fallback local)
+
+Ejemplo rapido local:
+
+```env
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=sistema_conciliacion
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+DATABASE_URL=
+```
+
+Si usas `DATABASE_URL`, debe ser asi:
+
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/sistema_conciliacion
+```
+
 ## Ejecutar
-Antes del primer arranque (o despues de borrar la base de datos), aplica migraciones:
+Antes del primer arranque (o en una base nueva), aplica migraciones:
 
 ```powershell
 alembic upgrade head
@@ -25,6 +51,31 @@ uvicorn app.main:app --reload
 ```
 
 API docs: http://127.0.0.1:8000/docs
+
+## Migrar datos existentes de SQLite a PostgreSQL
+Si tienes datos historicos en `cointra.db`, puedes copiarlos a PostgreSQL:
+
+1. Asegura que PostgreSQL este arriba y que la BD tenga el esquema con `alembic upgrade head`.
+2. Ejecuta:
+
+```powershell
+python scripts/migrate_sqlite_to_postgres.py
+```
+
+El script trunca tablas destino, copia registros y reajusta secuencias.
+
+## Preparado para contenedores (siguiente fase)
+La configuracion ya esta organizada para separar servicios:
+
+- `frontend` (React/Vite)
+- `backend` (FastAPI)
+- `db` (PostgreSQL)
+
+Recomendacion para la fase Docker:
+
+- Backend usando `DATABASE_URL=postgresql+psycopg://...` con host de servicio (`db`).
+- Frontend consumiendo API por variable `VITE_API_URL`.
+- Ejecutar `alembic upgrade head` al iniciar backend.
 
 ## Notificaciones (internas + correo manual)
 - Endpoint bandeja usuario: `GET /api/notificaciones/mis`

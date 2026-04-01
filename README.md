@@ -4,7 +4,7 @@ Implementacion inicial full-stack basada en tus requerimientos funcionales:
 
 - Backend: FastAPI + SQLAlchemy + JWT + RBAC
 - Frontend: React + TypeScript + Vite
-- Base de datos: SQLite (facil de iniciar localmente)
+- Base de datos: PostgreSQL
 
 ## Estructura
 - `backend/`: API, modelos, reglas de negocio y seguridad por rol
@@ -35,6 +35,7 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
@@ -53,4 +54,6 @@ npm run dev
 - Flujo de aprobacion parcial por item con auditoria completa
 - Notificaciones por correo y alerta interna
 - Exportacion Excel/PDF por rol
-- Migraciones (Alembic) y PostgreSQL para produccion
+- Despliegue con contenedores separados (frontend, backend, db)
+
+Guia de preparacion para contenedores: `docs/CONTAINERS_READY.md`

@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE servicios
-        SET requiere_origen_destino = 1
+        SET requiere_origen_destino = true
         WHERE UPPER(codigo) IN ('VIAJE', 'VIAJE_ADICIONAL', 'VIAJE_EXTRA', 'PEAJE', 'PEAJES')
         """
     )
