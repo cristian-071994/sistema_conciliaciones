@@ -1,7 +1,7 @@
 # CONTEXT DATABASE - Estado actual
 
 ## Motor objetivo
-PostgreSQL.
+PostgreSQL obligatorio en desarrollo y produccion.
 
 ## Acceso desde backend
 La URL de SQLAlchemy se resuelve en este orden:
@@ -30,10 +30,15 @@ Variables opcionales del script:
 - SQLITE_SOURCE_URL
 - POSTGRES_TARGET_URL
 
+Alcance:
+- SQLite se considera solo fuente historica de migracion puntual.
+- SQLite no esta soportado como motor de ejecucion del backend.
+
 ## Convenciones operativas
 - Crear y versionar cambios de esquema solo por Alembic.
 - No alterar estructura de tablas manualmente en produccion.
 - Ejecutar migraciones antes de levantar backend en entornos nuevos.
+- Ejecutar backend y Alembic siempre contra PostgreSQL.
 
 ## Preparacion para contenedores
 Diseno pensado para separar db como servicio dedicado y exponer al backend por URL de red interna.

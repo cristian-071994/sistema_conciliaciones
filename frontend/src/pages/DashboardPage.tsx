@@ -178,6 +178,7 @@ interface Props {
 }
 
 export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConciliaciones, openConciliacionId, onOpenConciliacionHandled }: Props) {
+  const SERVICIOS_PAGE_SIZE = 25;
   const location = useLocation();
   const [activeModule, setActiveModule] = useState<"viajes" | "conciliaciones">("viajes");
   const conciliacionesListRef = useRef<HTMLElement | null>(null);
@@ -234,6 +235,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [filtroConciliacionCreadaDesde, setFiltroConciliacionCreadaDesde] = useState("");
   const [filtroConciliacionCreadaHasta, setFiltroConciliacionCreadaHasta] = useState("");
   const [filtroEstadoViaje, setFiltroEstadoViaje] = useState<"TODOS" | "PENDIENTE" | "EN_REVISION" | "CONCILIADO">("TODOS");
+  const [serviciosPage, setServiciosPage] = useState(1);
   const [filtrosTablaViajes, setFiltrosTablaViajes] = useState({
     titulo: "",
     servicio: "",
@@ -316,6 +318,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   const selected = conciliaciones.find((c) => c.id === selectedConciliacion) || null;
   const maxDate = new Date().toISOString().split("T")[0];
+  const maxMonth = maxDate.slice(0, 7);
   const operacionesActivas = useMemo(() => operaciones.filter((op) => op.activa), [operaciones]);
   const serviciosActivos = useMemo(() => servicios.filter((servicio) => servicio.activo), [servicios]);
   const vehiculosActivos = useMemo(() => vehiculos.filter((vehiculo) => vehiculo.activo), [vehiculos]);
@@ -326,6 +329,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   );
   const servicioRequiereOrigenDestino = selectedServicio?.requiere_origen_destino ?? false;
   const isServicioHoraExtra = selectedServicio?.codigo === "HORA_EXTRA";
+  const isServicioConductorRelevo = selectedServicio?.codigo === "CONDUCTOR_RELEVO";
   const isServicioViaje = !selectedServicio || ["VIAJE", "VIAJE_ADICIONAL"].includes(selectedServicio.codigo);
   const shouldUseManualTarifa = !isServicioViaje && !tarifaLookup;
   const horasExtraCalculadas = useMemo(() => {
@@ -347,6 +351,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const tarifaHoraCliente = tarifaLookup?.tarifa_cliente ?? Number(viajeForm.tarifa_cliente || 0);
   const totalHoraExtraTercero = Number((horasExtraCalculadas * tarifaHoraTercero).toFixed(2));
   const totalHoraExtraCliente = Number((horasExtraCalculadas * tarifaHoraCliente).toFixed(2));
+  const fechaServicioInputValue = isServicioConductorRelevo
+    ? viajeForm.fecha_servicio.slice(0, 7)
+    : viajeForm.fecha_servicio.length === 7
+      ? `${viajeForm.fecha_servicio}-01`
+      : viajeForm.fecha_servicio;
   const conciliacionById = useMemo(() => {
     return new Map(conciliaciones.map((c) => [c.id, c]));
   }, [conciliaciones]);
@@ -446,6 +455,26 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     });
   }, [viajes, filtroEstadoViaje, filtrosTablaViajes, operacionById, conciliacionById]);
 
+  const totalServiciosPages = Math.max(1, Math.ceil(viajesFiltrados.length / SERVICIOS_PAGE_SIZE));
+  const serviciosPageSafe = Math.min(serviciosPage, totalServiciosPages);
+  const viajesFiltradosPaginados = useMemo(() => {
+    const start = (serviciosPageSafe - 1) * SERVICIOS_PAGE_SIZE;
+    return viajesFiltrados.slice(start, start + SERVICIOS_PAGE_SIZE);
+  }, [viajesFiltrados, serviciosPageSafe]);
+
+  const visibleServiciosPages = useMemo(() => {
+    const maxVisible = 7;
+    if (totalServiciosPages <= maxVisible) {
+      return Array.from({ length: totalServiciosPages }, (_, idx) => idx + 1);
+    }
+    let start = Math.max(1, serviciosPageSafe - 3);
+    let end = Math.min(totalServiciosPages, start + maxVisible - 1);
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+    return Array.from({ length: end - start + 1 }, (_, idx) => start + idx);
+  }, [serviciosPageSafe, totalServiciosPages]);
+
   const viajeStatusCounts = useMemo(() => {
     const counts = {
       TODOS: viajes.length,
@@ -494,6 +523,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedViajeDetalle]);
+
+  useEffect(() => {
+    setServiciosPage(1);
+  }, [filtroEstadoViaje, filtrosTablaViajes]);
+
+  useEffect(() => {
+    if (serviciosPage > totalServiciosPages) {
+      setServiciosPage(totalServiciosPages);
+    }
+  }, [serviciosPage, totalServiciosPages]);
 
   useEffect(() => {
     if (!openConciliacionId) return;
@@ -813,8 +852,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   async function createViaje() {
     setError("");
-    if (!viajeForm.operacion_id || !viajeForm.servicio_id || !viajeForm.titulo.trim() || !viajeForm.fecha_servicio || !viajeForm.placa) {
-      setError("Debes completar operación, tipo de servicio, título, fecha y placa.");
+    if (
+      !viajeForm.operacion_id ||
+      !viajeForm.servicio_id ||
+      !viajeForm.titulo.trim() ||
+      !viajeForm.fecha_servicio ||
+      (!isServicioConductorRelevo && !viajeForm.placa)
+    ) {
+      setError(
+        isServicioConductorRelevo
+          ? "Debes completar operación, tipo de servicio, título y mes."
+          : "Debes completar operación, tipo de servicio, título, fecha y placa."
+      );
       return;
     }
 
@@ -837,12 +886,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       operacion_id: Number(viajeForm.operacion_id),
       servicio_id: Number(viajeForm.servicio_id),
       titulo: viajeForm.titulo,
-      fecha_servicio: viajeForm.fecha_servicio,
+      fecha_servicio:
+        isServicioConductorRelevo && viajeForm.fecha_servicio.length === 7
+          ? `${viajeForm.fecha_servicio}-01`
+          : viajeForm.fecha_servicio,
       origen: viajeForm.origen.trim() || undefined,
       destino: viajeForm.destino.trim() || undefined,
-      placa: viajeForm.placa,
+      placa: isServicioConductorRelevo ? "" : viajeForm.placa,
       hora_inicio: isServicioHoraExtra ? viajeForm.hora_inicio : undefined,
-      conductor: isServicioHoraExtra ? undefined : (viajeForm.conductor || ""),
+      conductor: isServicioHoraExtra || isServicioConductorRelevo ? undefined : (viajeForm.conductor || ""),
       tarifa_tercero:
         isServicioViaje || shouldUseManualTarifa
           ? Number(viajeForm.tarifa_tercero || 0)
@@ -1617,6 +1669,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           servicio_id: e.target.value,
                           origen: "",
                           destino: "",
+                          placa: "",
+                          conductor: "",
                           hora_inicio: "",
                         }))
                       }
@@ -1647,14 +1701,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                      Fecha
+                      {isServicioConductorRelevo ? "Mes" : "Fecha"}
                     </label>
                     <input
                       name="fecha_servicio"
-                      type="date"
+                      type={isServicioConductorRelevo ? "month" : "date"}
                       required
-                      max={maxDate}
-                      value={viajeForm.fecha_servicio}
+                      max={isServicioConductorRelevo ? maxMonth : maxDate}
+                      value={fechaServicioInputValue}
                       onChange={(e) =>
                         setViajeForm((prev) => ({ ...prev, fecha_servicio: e.target.value }))
                       }
@@ -1662,6 +1716,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     />
                   </div>
 
+                  {!isServicioConductorRelevo && (
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                       Placa
@@ -1694,6 +1749,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       </p>
                     )}
                   </div>
+                  )}
 
                   {servicioRequiereOrigenDestino && (
                     <>
@@ -1726,7 +1782,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </>
                   )}
 
-                  {!isServicioHoraExtra && (
+                  {!isServicioHoraExtra && !isServicioConductorRelevo && (
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                         Conductor (opcional)
@@ -1876,10 +1932,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 <div className="flex flex-1 items-center justify-end gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {[
-                      ["TODOS", `Todos (${viajeStatusCounts.TODOS})`],
-                      ["PENDIENTE", `Pendiente (${viajeStatusCounts.PENDIENTE})`],
-                      ["EN_REVISION", `En revisión (${viajeStatusCounts.EN_REVISION})`],
-                      ["CONCILIADO", `Conciliado (${viajeStatusCounts.CONCILIADO})`],
+                      ["TODOS", `Total servicios (${viajeStatusCounts.TODOS})`],
+                      ["PENDIENTE", `Servicios pendientes (${viajeStatusCounts.PENDIENTE})`],
+                      ["EN_REVISION", `Servicios en revisión (${viajeStatusCounts.EN_REVISION})`],
+                      ["CONCILIADO", `Servicios conciliados (${viajeStatusCounts.CONCILIADO})`],
                     ].map(([value, label]) => (
                       <button
                         key={value}
@@ -2020,7 +2076,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </tr>
                   </thead>
                   <tbody>
-                    {viajesFiltrados.map((v) => (
+                    {viajesFiltradosPaginados.map((v) => (
                       <tr key={v.id} className="border-b border-border last:border-0">
                         {(() => {
                           const estadoVisible = getEstadoVisibleViaje(v);
@@ -2122,6 +2178,43 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-neutral">
+                  Mostrando {viajesFiltradosPaginados.length} de {viajesFiltrados.length} servicios filtrados.
+                </p>
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setServiciosPage(1)}
+                    disabled={serviciosPageSafe === 1}
+                    className="rounded-md border border-border bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Inicio
+                  </button>
+                  {visibleServiciosPages.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setServiciosPage(pageNumber)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold shadow-sm transition ${
+                        pageNumber === serviciosPageSafe
+                          ? "bg-emerald-600 text-white"
+                          : "border border-border bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setServiciosPage(totalServiciosPages)}
+                    disabled={serviciosPageSafe === totalServiciosPages}
+                    className="rounded-md border border-border bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Final
+                  </button>
+                </div>
               </div>
             </section>
         </>
@@ -3160,7 +3253,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         {facturacionErrorParsed ? (
                           <>
                             <p className="font-semibold">{facturacionErrorParsed.summary}</p>
-                            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-danger/80">Viajes pendientes</p>
+                            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-danger/80">Servicios pendientes</p>
                             <div className="mt-2 flex flex-wrap gap-2">
                               {facturacionErrorParsed.viajesPendientes.map((viaje, index) => (
                                 <span

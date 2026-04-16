@@ -4,7 +4,7 @@ Implementacion inicial full-stack basada en tus requerimientos funcionales:
 
 - Backend: FastAPI + SQLAlchemy + JWT + RBAC
 - Frontend: React + TypeScript + Vite
-- Base de datos: PostgreSQL
+- Base de datos: PostgreSQL (obligatoria en desarrollo y produccion)
 
 ## Estructura
 - `backend/`: API, modelos, reglas de negocio y seguridad por rol
@@ -55,5 +55,10 @@ npm run dev
 - Notificaciones por correo y alerta interna
 - Exportacion Excel/PDF por rol
 - Despliegue con contenedores separados (frontend, backend, db)
+
+## Politica de base de datos
+- El proyecto corre solo sobre PostgreSQL.
+- SQLite se mantiene unicamente para migracion historica one-time con el script `backend/scripts/migrate_sqlite_to_postgres.py`.
+- No se debe usar `cointra.db` como base activa del backend.
 
 Guia de preparacion para contenedores: `docs/CONTAINERS_READY.md`

@@ -4,9 +4,12 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
 resolved_database_url = settings.sqlalchemy_database_url
-connect_args = {"check_same_thread": False} if resolved_database_url.startswith("sqlite") else {}
+if not resolved_database_url.lower().startswith("postgresql"):
+    raise RuntimeError(
+        "Configuracion de base de datos invalida: solo se permite PostgreSQL en este proyecto."
+    )
 
-engine = create_engine(resolved_database_url, connect_args=connect_args)
+engine = create_engine(resolved_database_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

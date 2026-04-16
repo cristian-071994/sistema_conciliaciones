@@ -13,7 +13,8 @@ copy .env.example .env
 ```
 
 ## Configuracion de base de datos (PostgreSQL)
-El backend usa PostgreSQL por defecto.
+El backend usa PostgreSQL de forma obligatoria en desarrollo y produccion.
+No se soporta SQLite como motor de ejecucion.
 
 Puedes configurar conexion de dos formas:
 
@@ -52,8 +53,8 @@ uvicorn app.main:app --reload
 
 API docs: http://127.0.0.1:8000/docs
 
-## Migrar datos existentes de SQLite a PostgreSQL
-Si tienes datos historicos en `cointra.db`, puedes copiarlos a PostgreSQL:
+## Migrar datos historicos de SQLite a PostgreSQL (solo legado)
+Si tienes datos historicos en `cointra.db`, puedes copiarlos a PostgreSQL una sola vez:
 
 1. Asegura que PostgreSQL este arriba y que la BD tenga el esquema con `alembic upgrade head`.
 2. Ejecuta:
@@ -63,6 +64,10 @@ python scripts/migrate_sqlite_to_postgres.py
 ```
 
 El script trunca tablas destino, copia registros y reajusta secuencias.
+
+Importante:
+- Este script no habilita ni valida SQLite como runtime del backend.
+- El backend y Alembic deben ejecutarse siempre contra PostgreSQL.
 
 ## Preparado para contenedores (siguiente fase)
 La configuracion ya esta organizada para separar servicios:

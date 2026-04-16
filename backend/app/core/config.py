@@ -47,12 +47,21 @@ class Settings(BaseSettings):
     def sqlalchemy_database_url(self) -> str:
         # Priority: explicit DATABASE_URL for cloud/containers, otherwise compose from PG vars.
         if self.database_url and self.database_url.strip():
-            return self.database_url.strip()
-        return (
+            candidate = self.database_url.strip()
+        else:
+            candidate = (
             "postgresql+psycopg://"
             f"{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+            )
+
+        if not candidate.lower().startswith("postgresql"):
+            raise ValueError(
+                "DATABASE_URL invalida: este proyecto solo soporta PostgreSQL. "
+                "Configura una URL con esquema 'postgresql+psycopg://'."
+            )
+
+        return candidate
 
 
 settings = Settings()

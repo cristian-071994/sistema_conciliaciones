@@ -22,6 +22,7 @@ Regla:
 
 - Si DATABASE_URL tiene valor, backend usa esa cadena.
 - Si DATABASE_URL esta vacia, backend arma URL con POSTGRES_*.
+- El backend solo soporta PostgreSQL como motor de ejecucion.
 
 ### Frontend
 Variables clave:
@@ -49,3 +50,8 @@ Variables opcionales del script:
 
 - SQLITE_SOURCE_URL
 - POSTGRES_TARGET_URL
+
+Alcance:
+
+- SQLite se usa unicamente como fuente historica para migracion puntual.
+- SQLite no debe usarse como base activa en desarrollo ni en produccion.

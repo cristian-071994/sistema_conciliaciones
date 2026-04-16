@@ -835,8 +835,8 @@ export function DashboardHomePage({ user }: Props) {
                   value={`${data.kpis.variacion_ganancia_pct > 0 ? "+" : ""}${oneDecimal(data.kpis.variacion_ganancia_pct)}%`}
                   hint="Comparado con período anterior equivalente"
                 />
-                <StatCard title="Viajes pendientes" value={String(data.kpis.viajes_pendientes)} />
-                <StatCard title="Viajes en revisión" value={String(data.kpis.viajes_en_revision)} />
+                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} />
+                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} />
               </>
             ) : (
               <>
@@ -854,15 +854,15 @@ export function DashboardHomePage({ user }: Props) {
                 />
                 <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" />
                 <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" />
-                <StatCard title="Viajes pendientes" value={String(data.kpis.viajes_pendientes)} />
-                <StatCard title="Viajes en revisión" value={String(data.kpis.viajes_en_revision)} />
-                <StatCard title="Viajes conciliados" value={String(data.kpis.viajes_conciliados)} />
+                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} />
+                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} />
+                <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} />
               </>
             )}
           </section>
 
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            {isCointra && <StatCard title="Viajes conciliados" value={String(data.kpis.viajes_conciliados)} />}
+            {isCointra && <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} />}
             <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />

@@ -54,6 +54,26 @@ def _ensure_cointra_admin(user: Usuario) -> None:
         raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede editar o inactivar viajes")
 
 
+def _ensure_viaje_mutable(viaje: Viaje, db: Session) -> None:
+    """Evita alterar historicos cuando el viaje ya quedo dentro de una conciliacion en flujo avanzado."""
+    if viaje.conciliacion_id is None:
+        return
+
+    conciliacion = viaje.conciliacion or db.get(Conciliacion, viaje.conciliacion_id)
+    if not conciliacion:
+        return
+
+    estado = getattr(conciliacion.estado, "value", conciliacion.estado)
+    if estado != "BORRADOR":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este viaje pertenece a una conciliacion en estado "
+                f"{estado}. No se puede modificar para proteger el historico liquidado/facturado."
+            ),
+        )
+
+
 def _is_viaje_or_extra(servicio: Servicio | None) -> bool:
     if not servicio:
         return True
@@ -64,6 +84,12 @@ def _is_hora_extra(servicio: Servicio | None) -> bool:
     if not servicio:
         return False
     return servicio.codigo == "HORA_EXTRA"
+
+
+def _is_conductor_relevo(servicio: Servicio | None) -> bool:
+    if not servicio:
+        return False
+    return servicio.codigo == "CONDUCTOR_RELEVO"
 
 
 def _needs_origen_destino(servicio: Servicio | None) -> bool:
@@ -111,7 +137,8 @@ def create_viaje(
         if not servicio or not servicio.activo:
             raise HTTPException(status_code=404, detail="Servicio no encontrado")
 
-    placa = payload.placa.strip().upper()
+    is_conductor_relevo = _is_conductor_relevo(servicio)
+    placa = "N/A" if is_conductor_relevo else payload.placa.strip().upper()
     
     origen = payload.origen.strip() if payload.origen and payload.origen.strip() else ""
     destino = payload.destino.strip() if payload.destino and payload.destino.strip() else ""
@@ -133,7 +160,28 @@ def create_viaje(
     hora_fin = None
     horas_cantidad = None
 
-    if not _is_viaje_or_extra(servicio):
+    if is_conductor_relevo:
+        hora_inicio = None
+        hora_fin = None
+        horas_cantidad = 1.0
+
+        tarifa_manual_tercero = float(payload.tarifa_tercero or 0)
+        tarifa_manual_cliente = float(payload.tarifa_cliente or 0)
+        if tarifa_manual_tercero <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Debes ingresar tarifa manual para el servicio Conductor relevo.",
+            )
+
+        if tarifa_manual_cliente <= 0:
+            tarifa_manual_cliente, rentabilidad = calculate_tarifa_cliente(tarifa_manual_tercero, operacion)
+        else:
+            if tarifa_manual_cliente > 0:
+                rentabilidad = round((1 - (tarifa_manual_tercero / tarifa_manual_cliente)) * 100, 2)
+
+        tarifa_tercero = round(tarifa_manual_tercero, 2)
+        tarifa_cliente = round(float(tarifa_manual_cliente), 2)
+    elif not _is_viaje_or_extra(servicio):
         vehiculo = db.query(Vehiculo).filter(Vehiculo.placa == placa, Vehiculo.activo.is_(True)).first()
         if not vehiculo:
             raise HTTPException(status_code=400, detail="La placa seleccionada no tiene vehiculo activo")
@@ -196,7 +244,7 @@ def create_viaje(
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
         horas_cantidad=horas_cantidad,
-        conductor=payload.conductor,
+        conductor=None if is_conductor_relevo else payload.conductor,
         tarifa_tercero=tarifa_tercero,
         tarifa_cliente=tarifa_cliente,
         rentabilidad=rentabilidad,
@@ -351,6 +399,8 @@ def update_viaje(
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
 
+    _ensure_viaje_mutable(viaje, db)
+
     data = payload.model_dump(exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="No se enviaron cambios")
@@ -383,6 +433,8 @@ def deactivate_viaje(
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
 
+    _ensure_viaje_mutable(viaje, db)
+
     viaje.activo = False
     db.commit()
     return {"ok": True}
@@ -399,6 +451,8 @@ def reactivate_viaje(
     viaje = db.get(Viaje, viaje_id)
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
+
+    _ensure_viaje_mutable(viaje, db)
 
     viaje.activo = True
     db.commit()
