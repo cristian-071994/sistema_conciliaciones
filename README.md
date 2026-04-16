@@ -1,4 +1,4 @@
-# Sistema de Conciliacion - Cointra S.A.S.
+# Sistema de Conciliacion - Cointra S.A.S. ---- .
 
 Implementacion inicial full-stack basada en tus requerimientos funcionales:
 
