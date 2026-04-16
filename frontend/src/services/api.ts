@@ -272,9 +272,6 @@ export const api = {
       periodo_fin: string;
       placas: string[];
       valor_tercero: number;
-      incluir_conductor_relevo: boolean;
-      relevo_con_valor: boolean;
-      valor_tercero_relevo?: number | null;
     }
   ) =>
     request<Item[]>(`/conciliaciones/${conciliacionId}/liquidacion-contrato-fijo`, {
@@ -307,15 +304,6 @@ export const api = {
   quitarManifiestoConciliacion: (conciliacionId: number, manifiestoId: number) =>
     request<{ ok: boolean }>(`/conciliaciones/${conciliacionId}/manifiestos/${manifiestoId}`, {
       method: "DELETE",
-    }),
-  actualizarManifiestoConciliacion: (
-    conciliacionId: number,
-    manifiestoId: number,
-    manifiesto_numero: string
-  ) =>
-    request<ConciliacionManifiesto>(`/conciliaciones/${conciliacionId}/manifiestos/${manifiestoId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ manifiesto_numero }),
     }),
   enviarRevisionConciliacion: (
     conciliacionId: number,

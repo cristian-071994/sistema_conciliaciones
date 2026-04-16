@@ -71,36 +71,6 @@ function parseFacturacionError(
   };
 }
 
-function parseLiquidacionManifestMismatchError(error: unknown): {
-  message: string;
-  invalidManifiestos: Array<{ id: number; manifiesto_numero: string; placa_avansat?: string }>;
-} | null {
-  const message = (error as Error)?.message || "";
-  if (!message) return null;
-  try {
-    const parsed = JSON.parse(message) as { detail?: unknown };
-    const detail = parsed.detail as
-      | { message?: string; invalid_manifiestos?: Array<{ id: number; manifiesto_numero: string; placa_avansat?: string }> }
-      | string
-      | undefined;
-
-    if (!detail || typeof detail === "string") return null;
-    const invalidManifiestos = Array.isArray(detail.invalid_manifiestos)
-      ? detail.invalid_manifiestos
-          .filter((row) => typeof row?.id === "number" && !!row?.manifiesto_numero)
-          .map((row) => ({ id: row.id, manifiesto_numero: String(row.manifiesto_numero), placa_avansat: row.placa_avansat }))
-      : [];
-
-    if (invalidManifiestos.length === 0) return null;
-    return {
-      message: detail.message || "Algunos manifiestos no corresponden a las placas de la liquidación.",
-      invalidManifiestos,
-    };
-  } catch {
-    return null;
-  }
-}
-
 interface EditableCellProps {
   initialValue: string;
   onSave: (value: string) => Promise<void>;
@@ -213,11 +183,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [selectedConciliacion, setSelectedConciliacion] = useState<number | null>(null);
   const [pendingViajes, setPendingViajes] = useState<Viaje[]>([]);
   const [selectedViajeIds, setSelectedViajeIds] = useState<number[]>([]);
-  const [liquidacionManifiestos, setLiquidacionManifiestos] = useState<ConciliacionManifiesto[]>([]);
   const [conciliacionManifiestos, setConciliacionManifiestos] = useState<ConciliacionManifiesto[]>([]);
-  const [liquidacionManifiestoInput, setLiquidacionManifiestoInput] = useState("");
   const [conciliacionManifiestoInput, setConciliacionManifiestoInput] = useState("");
-  const [liquidacionManifiestoError, setLiquidacionManifiestoError] = useState("");
   const [conciliacionManifiestoError, setConciliacionManifiestoError] = useState("");
   const [savingManifiesto, setSavingManifiesto] = useState(false);
   const [removingManifiestoId, setRemovingManifiestoId] = useState<number | null>(null);
@@ -278,11 +245,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [isCreatingLiquidacionContratoFijo, setIsCreatingLiquidacionContratoFijo] = useState(false);
   const [isSavingConciliacion, setIsSavingConciliacion] = useState(false);
   const [isDownloadingExcel, setIsDownloadingExcel] = useState(false);
-  const [invalidLiquidacionManifiestos, setInvalidLiquidacionManifiestos] = useState<
-    Array<{ id: number; manifiesto_numero: string; placa_avansat?: string }>
-  >([]);
-  const [manifiestoFixInputs, setManifiestoFixInputs] = useState<Record<number, string>>({});
-  const [savingManifiestoFixId, setSavingManifiestoFixId] = useState<number | null>(null);
   const [saveResultModal, setSaveResultModal] = useState<{
     title: string;
     description: string;
@@ -292,9 +254,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     periodo_fin: "",
     placa: "",
     valor_tercero: "",
-    incluir_conductor_relevo: false,
-    relevo_con_valor: false,
-    valor_tercero_relevo: "",
   });
   const [viajeEditModal, setViajeEditModal] = useState<
     { id: number; titulo: string; origen: string; destino: string } | null
@@ -311,7 +270,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     } | null
   >(null);
   const selectedConciliacionRef = useRef<HTMLElement | null>(null);
-  const liquidacionManifiestoInputRef = useRef<HTMLInputElement | null>(null);
   const conciliacionManifiestoInputRef = useRef<HTMLInputElement | null>(null);
   const reviewRecipientDirtyRef = useRef(false);
   const suggestedReviewForConciliacionRef = useRef<number | null>(null);
@@ -634,11 +592,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       rentabilidadPct,
     };
   }, [itemsLiquidacion]);
-  const hasConductorRelevoLiquidacion = useMemo(
-    () => itemsLiquidacion.some((item) => !!item.liquidacion_es_relevo),
-    [itemsLiquidacion]
-  );
-
   const totals = useMemo(() => {
     return itemsConciliacion.reduce<{ tarifaTercero: number; tarifaCliente: number; gananciaCointra: number }>(
       (acc: { tarifaTercero: number; tarifaCliente: number; gananciaCointra: number }, item: Item) => {
@@ -789,15 +742,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     try {
       const itemData = await api.items(conciliacionId);
       setItems(itemData);
-      const [manifestsLiquidacion, manifestsConciliacion] = await Promise.all([
-        api.manifiestosConciliacion(conciliacionId, "LIQUIDACION_CONTRATO_FIJO"),
-        api.manifiestosConciliacion(conciliacionId, "CONCILIACION"),
-      ]);
-      setLiquidacionManifiestos(manifestsLiquidacion);
+      const manifestsConciliacion = await api.manifiestosConciliacion(conciliacionId, "CONCILIACION");
       setConciliacionManifiestos(manifestsConciliacion);
-      setLiquidacionManifiestoInput("");
       setConciliacionManifiestoInput("");
-      setLiquidacionManifiestoError("");
       setConciliacionManifiestoError("");
       if (user.rol === "CLIENTE") {
         const initialSelections: Record<number, boolean> = {};
@@ -826,11 +773,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return true;
     } catch (e) {
       setError(toSpanishError(e));
-      setLiquidacionManifiestos([]);
       setConciliacionManifiestos([]);
-      setLiquidacionManifiestoInput("");
       setConciliacionManifiestoInput("");
-      setLiquidacionManifiestoError("");
       setConciliacionManifiestoError("");
       return false;
     } finally {
@@ -1083,9 +1027,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       periodo_fin,
       placa,
       valor_tercero,
-      incluir_conductor_relevo,
-      relevo_con_valor,
-      valor_tercero_relevo,
     } = liquidacionContratoFijoForm;
 
     if (!periodo_inicio || !periodo_fin) {
@@ -1103,26 +1044,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return;
     }
 
-    const valorRelevoNum = Number(valor_tercero_relevo || 0);
-    if (incluir_conductor_relevo && relevo_con_valor && valor_tercero_relevo && (!Number.isFinite(valorRelevoNum) || valorRelevoNum < 0)) {
-      setError("El valor de conductor relevo debe ser válido.");
-      return;
-    }
-
     setIsCreatingLiquidacionContratoFijo(true);
     try {
-      const incluirRelevo = incluir_conductor_relevo && !hasConductorRelevoLiquidacion;
       await api.crearLiquidacionContratoFijo(selected.id, {
         periodo_inicio,
         periodo_fin,
         placas: [placa.trim().toUpperCase()],
         valor_tercero: valorTerceroNum,
-        incluir_conductor_relevo: incluirRelevo,
-        relevo_con_valor,
-        valor_tercero_relevo:
-          incluirRelevo && relevo_con_valor && valor_tercero_relevo
-            ? valorRelevoNum
-            : null,
       });
       await onRefreshConciliaciones();
       await loadItems(selected.id);
@@ -1131,76 +1059,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         periodo_fin,
         placa: "",
         valor_tercero: "",
-        incluir_conductor_relevo: false,
-        relevo_con_valor: incluirRelevo ? relevo_con_valor : false,
-        valor_tercero_relevo: "",
       });
     } catch (e) {
       setError(toSpanishError(e));
     } finally {
       setIsCreatingLiquidacionContratoFijo(false);
-    }
-  }
-
-  async function asociarManifiestoLiquidacion() {
-    if (!selected) return;
-    const rawInput = liquidacionManifiestoInput.trim();
-    if (!rawInput) return;
-
-    setError("");
-    setLiquidacionManifiestoError("");
-    setSavingManifiesto(true);
-    try {
-      const tokens = Array.from(
-        new Set(
-          rawInput
-            .split(/[\s,;]+/)
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-        )
-      );
-      if (tokens.length === 0) {
-        setLiquidacionManifiestoError("No se detectaron manifiestos válidos para asociar.");
-        liquidacionManifiestoInputRef.current?.focus();
-        return;
-      }
-
-      const failed: string[] = [];
-      let asociados = 0;
-      for (const raw of tokens) {
-        const normalized = raw.startsWith("0") ? raw : `0${raw}`;
-        try {
-          await api.asociarManifiestoConciliacion(
-            selected.id,
-            normalized,
-            "LIQUIDACION_CONTRATO_FIJO"
-          );
-          asociados += 1;
-        } catch (e) {
-          failed.push(`${normalized}: ${toSpanishError(e)}`);
-        }
-      }
-
-      const manifests = await api.manifiestosConciliacion(selected.id, "LIQUIDACION_CONTRATO_FIJO");
-      setLiquidacionManifiestos(manifests);
-      if (failed.length === 0) {
-        setLiquidacionManifiestoInput("");
-        setLiquidacionManifiestoError("");
-      } else {
-        const failedIds = failed.map((row) => row.split(":")[0]);
-        setLiquidacionManifiestoInput(failedIds.join(" "));
-        setLiquidacionManifiestoError(
-          `Se asociaron ${asociados} de ${tokens.length} manifiestos.\nNo se pudieron asociar:\n${failed.join("\n")}`
-        );
-        liquidacionManifiestoInputRef.current?.focus();
-      }
-      await onRefreshConciliaciones();
-    } catch (e) {
-      const detail = toSpanishError(e);
-      setLiquidacionManifiestoError(detail);
-      liquidacionManifiestoInputRef.current?.focus();
-    } finally {
-      setSavingManifiesto(false);
     }
   }
 
@@ -1265,7 +1128,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   async function descargarConciliacionExcel() {
     if (!selected) return;
     setError("");
-    setInvalidLiquidacionManifiestos([]);
     setIsDownloadingExcel(true);
     try {
       const blob = await api.descargarConciliacionExcel(selected.id);
@@ -1277,59 +1139,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       a.click();
       a.remove();
       URL.revokeObjectURL(href);
-      setManifiestoFixInputs({});
     } catch (e) {
-      const mismatch = parseLiquidacionManifestMismatchError(e);
-      if (mismatch) {
-        setInvalidLiquidacionManifiestos(mismatch.invalidManifiestos);
-        const nextInputs: Record<number, string> = {};
-        mismatch.invalidManifiestos.forEach((row) => {
-          nextInputs[row.id] = "";
-        });
-        setManifiestoFixInputs(nextInputs);
-      }
       setError(toSpanishError(e));
     } finally {
       setIsDownloadingExcel(false);
-    }
-  }
-
-  async function corregirManifiestoYReintentar(manifiestoId: number) {
-    if (!selected) return;
-    const nextValue = (manifiestoFixInputs[manifiestoId] || "").trim();
-    if (!nextValue) {
-      setError("Debes escribir el manifiesto correcto para reintentar.");
-      return;
-    }
-
-    setError("");
-    setSavingManifiestoFixId(manifiestoId);
-    try {
-      await api.actualizarManifiestoConciliacion(selected.id, manifiestoId, nextValue);
-      const manifests = await api.manifiestosConciliacion(selected.id, "LIQUIDACION_CONTRATO_FIJO");
-      setLiquidacionManifiestos(manifests);
-      await onRefreshConciliaciones();
-      await descargarConciliacionExcel();
-    } catch (e) {
-      setError(toSpanishError(e));
-    } finally {
-      setSavingManifiestoFixId(null);
-    }
-  }
-
-  async function quitarManifiestoLiquidacion(manifiestoId: number) {
-    if (!selected) return;
-    setError("");
-    setRemovingManifiestoId(manifiestoId);
-    try {
-      await api.quitarManifiestoConciliacion(selected.id, manifiestoId);
-      const manifests = await api.manifiestosConciliacion(selected.id, "LIQUIDACION_CONTRATO_FIJO");
-      setLiquidacionManifiestos(manifests);
-      await onRefreshConciliaciones();
-    } catch (e) {
-      setError(toSpanishError(e));
-    } finally {
-      setRemovingManifiestoId(null);
     }
   }
 
@@ -2644,7 +2457,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               Listado de servicios asociados a la conciliación #{selected.id}.
             </p>
           </div>
-          {((user.rol === "COINTRA" && selected.estado === "BORRADOR") || itemsLiquidacion.length > 0 || liquidacionManifiestos.length > 0) && (
+          {((user.rol === "COINTRA" && selected.estado === "BORRADOR") || itemsLiquidacion.length > 0) && (
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2726,58 +2539,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             placeholder="Ej. 150000"
                             className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                           />
-                        </div>
-                        <div className="rounded-lg border border-indigo-200 bg-white px-3 py-2.5">
-                          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-neutral">
-                            <input
-                              type="checkbox"
-                              checked={liquidacionContratoFijoForm.incluir_conductor_relevo}
-                              disabled={hasConductorRelevoLiquidacion}
-                              onChange={(e) =>
-                                setLiquidacionContratoFijoForm((prev) => ({
-                                  ...prev,
-                                  incluir_conductor_relevo: e.target.checked,
-                                  relevo_con_valor: e.target.checked ? prev.relevo_con_valor : false,
-                                  valor_tercero_relevo: e.target.checked ? prev.valor_tercero_relevo : "",
-                                }))
-                              }
-                              className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
-                            />
-                            Conductor relevo
-                          </label>
-                          {hasConductorRelevoLiquidacion && (
-                            <p className="mt-1 text-[11px] text-neutral">
-                              Ya existe un conductor relevo en esta conciliación. Solo se permite una vez.
-                            </p>
-                          )}
-                          {liquidacionContratoFijoForm.incluir_conductor_relevo && (
-                            <div className="mt-2 space-y-2">
-                              <label className="flex items-center gap-2 text-xs text-slate-700">
-                                <input
-                                  type="checkbox"
-                                  checked={liquidacionContratoFijoForm.relevo_con_valor}
-                                  onChange={(e) =>
-                                    setLiquidacionContratoFijoForm((prev) => ({ ...prev, relevo_con_valor: e.target.checked }))
-                                  }
-                                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
-                                />
-                                Marcar valor para conductor relevo
-                              </label>
-                              {liquidacionContratoFijoForm.relevo_con_valor && (
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step="0.01"
-                                  value={liquidacionContratoFijoForm.valor_tercero_relevo}
-                                  onChange={(e) =>
-                                    setLiquidacionContratoFijoForm((prev) => ({ ...prev, valor_tercero_relevo: e.target.value }))
-                                  }
-                                  placeholder="Valor tercero relevo (opcional)"
-                                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                                />
-                              )}
-                            </div>
-                          )}
                         </div>
                       </div>
 
@@ -2971,108 +2732,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </div>
                   )}
 
-                  <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Manifiestos asociados a la liquidación</p>
-                      <p className="text-xs text-neutral">
-                        Estos manifiestos harán parte de la liquidación y se tendrán en cuenta en el proceso de liquidar.
-                      </p>
-                    </div>
-
-                    {liquidacionManifiestos.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {liquidacionManifiestos.map((row) => (
-                          <span
-                            key={row.id}
-                            className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-900 shadow-sm"
-                          >
-                            {row.manifiesto_numero}
-                            <button
-                              type="button"
-                              onClick={() => void quitarManifiestoLiquidacion(row.id)}
-                              disabled={removingManifiestoId === row.id}
-                              className="rounded-full border border-sky-300 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 transition hover:bg-sky-50 disabled:opacity-50"
-                            >
-                              Quitar
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {liquidacionManifiestos.length === 0 && (
-                      <p className="text-xs text-neutral">Sin manifiestos asociados a contrato fijo.</p>
-                    )}
-
-                    {user.rol === "COINTRA" && selected.estado !== "BORRADOR" && !selected.enviada_facturacion && invalidLiquidacionManifiestos.length > 0 && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
-                          Corregir manifiestos con placa no coincidente
-                        </p>
-                        <p className="mt-1 text-xs text-amber-900">
-                          Solo usuarios Cointra pueden actualizar los manifiestos marcados abajo. Luego usa "Guardar y reintentar".
-                        </p>
-                        <div className="mt-3 space-y-2">
-                          {invalidLiquidacionManifiestos.map((row) => (
-                            <div key={row.id} className="grid gap-2 rounded-lg border border-amber-200 bg-white p-2 md:grid-cols-[minmax(180px,1fr),minmax(220px,1fr),auto]">
-                              <div className="text-xs text-slate-700">
-                                <p className="font-semibold text-slate-900">Manifiesto actual: {row.manifiesto_numero}</p>
-                                {row.placa_avansat && <p>Placa Avansat: {row.placa_avansat}</p>}
-                              </div>
-                              <input
-                                value={manifiestoFixInputs[row.id] ?? ""}
-                                onChange={(e) =>
-                                  setManifiestoFixInputs((prev) => ({
-                                    ...prev,
-                                    [row.id]: e.target.value,
-                                  }))
-                                }
-                                placeholder="Nuevo manifiesto correcto"
-                                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => void corregirManifiestoYReintentar(row.id)}
-                                disabled={!String(manifiestoFixInputs[row.id] ?? "").trim() || savingManifiestoFixId === row.id}
-                                className="inline-flex items-center justify-center rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-50"
-                              >
-                                {savingManifiestoFixId === row.id ? "Guardando..." : "Guardar y reintentar"}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                      <div className="space-y-1">
-                        <div className="grid gap-2 md:grid-cols-[1fr,auto]">
-                          <input
-                            ref={liquidacionManifiestoInputRef}
-                            value={liquidacionManifiestoInput}
-                            onChange={(e) => {
-                              setLiquidacionManifiestoInput(e.target.value);
-                              if (liquidacionManifiestoError) setLiquidacionManifiestoError("");
-                            }}
-                            placeholder="Pega manifiestos separados por espacio (ej: 12345 67890 54321)"
-                            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void asociarManifiestoLiquidacion()}
-                            disabled={!liquidacionManifiestoInput.trim() || savingManifiesto}
-                            className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 disabled:opacity-50"
-                          >
-                            Asociar
-                          </button>
-                        </div>
-                        <p className="text-[11px] text-neutral">El sistema agrega automáticamente un cero al inicio de cada manifiesto.</p>
-                        {liquidacionManifiestoError && (
-                          <p className="whitespace-pre-line text-xs font-medium text-danger">{liquidacionManifiestoError}</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
             </div>

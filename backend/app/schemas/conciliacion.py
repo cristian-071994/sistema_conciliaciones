@@ -139,9 +139,6 @@ class LiquidacionContratoFijoCreate(BaseModel):
     periodo_fin: date
     placas: list[str] = Field(min_length=1)
     valor_tercero: float = Field(gt=0)
-    incluir_conductor_relevo: bool = False
-    relevo_con_valor: bool = False
-    valor_tercero_relevo: float | None = Field(default=None, ge=0)
 
 
 ConciliacionManifiestoContexto = Literal["CONCILIACION", "LIQUIDACION_CONTRATO_FIJO"]

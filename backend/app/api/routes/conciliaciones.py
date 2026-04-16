@@ -329,22 +329,6 @@ def _liquidacion_exists(db: Session, conciliacion_id: int, liquidacion_id: int) 
     return False
 
 
-def _has_conductor_relevo_liquidacion(db: Session, conciliacion_id: int) -> bool:
-    relevo_items = (
-        db.query(ConciliacionItem)
-        .filter(
-            ConciliacionItem.conciliacion_id == conciliacion_id,
-            ConciliacionItem.tipo == ItemTipo.CONDUCTOR_RELEVO,
-        )
-        .all()
-    )
-    for item in relevo_items:
-        meta = _extract_liquidacion_metadata(item)
-        if meta and bool(meta.get("liquidacion_es_relevo")):
-            return True
-    return False
-
-
 def _find_last_status_actor(db: Session, conc: Conciliacion) -> tuple[str | None, str | None]:
     estado = _display_estado(conc)
     logs = (
@@ -695,11 +679,10 @@ def _fetch_avansat_with_fallback(
 def _prefetch_avansat_for_excel_or_raise(
     db: Session,
     manifests: list[ConciliacionManifiesto],
-    liquidacion_manifests: list[ConciliacionManifiesto],
 ) -> dict[str, dict]:
     normalized_manifiestos = [
         _normalize_manifiesto_for_lookup(row.manifiesto_numero)
-        for row in [*manifests, *liquidacion_manifests]
+        for row in manifests
         if _normalize_manifiesto_for_lookup(row.manifiesto_numero)
     ]
     unique_manifiestos = list(dict.fromkeys(normalized_manifiestos))
@@ -839,26 +822,14 @@ def _ensure_required_manifests_for_review_or_raise(db: Session, conciliacion_id:
     manifests_conciliacion = [
         row for row in manifests if row.contexto == MANIFIESTO_CONTEXTO_CONCILIACION
     ]
-    manifests_liquidacion = [
-        row for row in manifests if row.contexto == MANIFIESTO_CONTEXTO_LIQUIDACION
-    ]
-
     required_conciliacion = _required_placas_by_context(items, MANIFIESTO_CONTEXTO_CONCILIACION)
-    required_liquidacion = _required_placas_by_context(items, MANIFIESTO_CONTEXTO_LIQUIDACION)
     associated_conciliacion = _associated_placas_by_context(db, manifests_conciliacion)
-    associated_liquidacion = _associated_placas_by_context(db, manifests_liquidacion)
 
     missing_conciliacion = sorted(required_conciliacion - associated_conciliacion)
-    missing_liquidacion = sorted(required_liquidacion - associated_liquidacion)
-    if not missing_conciliacion and not missing_liquidacion:
+    if not missing_conciliacion:
         return
 
     detail_lines: list[str] = []
-    if missing_liquidacion:
-        detail_lines.append(
-            "En el contrato fijo te falta asociar manifiestos para los servicios de los vehiculos "
-            f"{', '.join(missing_liquidacion)}"
-        )
     if missing_conciliacion:
         detail_lines.append(
             "En la conciliacion te falta asociar manifiestos para los servicios de los vehiculos "
@@ -1037,7 +1008,6 @@ def _build_conciliacion_excel(
     conc: Conciliacion,
     items: list[ConciliacionItem],
     manifests: list[ConciliacionManifiesto],
-    liquidacion_manifests: list[ConciliacionManifiesto],
     user_role: UserRole,
     tipo_vehiculo_by_placa: dict[str, str],
     avansat_prefetched: dict[str, dict] | None = None,
@@ -1314,7 +1284,7 @@ def _build_conciliacion_excel(
             c.number_format = cop_format
         if "Valor Tercero" in bottom_col_idx:
             c = ws.cell(row=current_row, column=bottom_col_idx["Valor Tercero"], value=all_total_tercero)
-            c.number_format = cop_format        
+            c.number_format = cop_format
         if "Rentabilidad" in bottom_col_idx:
             c = ws.cell(row=current_row, column=bottom_col_idx["Rentabilidad"], value=all_rentabilidad)
             c.number_format = pct_format
@@ -1328,281 +1298,7 @@ def _build_conciliacion_excel(
             cell.border = border
         current_row += 2
 
-    # Ajuste de ancho general
-    for col_idx in range(1, max(len(top_headers), len(bottom_headers)) + 1):
-        ws.column_dimensions[get_column_letter(col_idx)].width = 22
-    ws.column_dimensions["A"].width = 18
-    ws.column_dimensions["B"].width = 26
-    ws.column_dimensions["C"].width = 42
-    ws.column_dimensions["D"].width = 30
-    ws.column_dimensions["E"].width = 20
-    ws.column_dimensions["F"].width = 20
-    ws.column_dimensions["G"].width = 18
-    ws.column_dimensions["H"].width = 18
-    ws.column_dimensions["I"].width = 20
-    ws.column_dimensions["J"].width = 20
-    ws.column_dimensions["K"].width = 16
-    ws.column_dimensions["L"].width = 22
-
-    # Hoja 2: quincena (manifiestos asociados a liquidacion contrato fijo + datos Avansat)
-    manifest_financials: dict[str, dict[str, float]] = {}
-    for item in items:
-        manifest_key = _normalize_manifiesto_for_lookup(item.manifiesto_numero)
-        if not manifest_key:
-            continue
-        bucket = manifest_financials.setdefault(
-            manifest_key,
-            {"valor_tercero": 0.0, "valor_cliente": 0.0},
-        )
-        bucket["valor_tercero"] += _as_float(item.tarifa_tercero)
-        bucket["valor_cliente"] += _as_float(item.tarifa_cliente)
-
-    liquidacion_totals_by_placa: dict[str, dict[str, float]] = {}
-    for liquidacion_item, _ in liquidacion_items:
-        placa_key = str(liquidacion_item.placa or "").strip().upper()
-        if not placa_key:
-            continue
-        plate_bucket = liquidacion_totals_by_placa.setdefault(
-            placa_key,
-            {"valor_tercero": 0.0, "valor_cliente": 0.0},
-        )
-        plate_bucket["valor_tercero"] += _as_float(liquidacion_item.tarifa_tercero)
-        plate_bucket["valor_cliente"] += _as_float(liquidacion_item.tarifa_cliente)
-
-    ws_quincena = wb.create_sheet("quincena")
-    quincena_headers = [
-        "Manifiesto",
-        "Fecha Emision",
-        "Placa Vehiculo",
-        "Trayler",
-        "Remesa",
-        "Producto",
-        "Ciudad Origen",
-        "Ciudad Destino",
-    ]
-    if show_tarifa_cliente:
-        quincena_headers.append("Valor Cliente")
-    if show_tarifa_tercero:
-        quincena_headers.append("Valor Tercero")
-    if show_cointra_financials:
-        quincena_headers.extend(["Rentabilidad", "Ganancia Cointra"])
-
-    quincena_col_idx = {header: idx for idx, header in enumerate(quincena_headers, start=1)}
-    ws_quincena.append(quincena_headers)
-    for idx, cell in enumerate(ws_quincena[1], start=1):
-        cell.fill = header_fill
-        if quincena_headers[idx - 1] in {"Valor Tercero", "Valor Cliente", "Rentabilidad", "Ganancia Cointra"}:
-            cell.fill = section_fill
-        cell.font = header_font
-        cell.alignment = center
-        cell.border = border
-
-    def _write_quincena_block_header(row_idx: int) -> None:
-        for idx, header in enumerate(quincena_headers, start=1):
-            cell = ws_quincena.cell(row=row_idx, column=idx, value=header)
-            cell.fill = header_fill
-            if header in {"Valor Tercero", "Valor Cliente", "Rentabilidad", "Ganancia Cointra"}:
-                cell.fill = section_fill
-            cell.font = header_font
-            cell.alignment = center
-            cell.border = border
-
-    manifest_entries: list[dict[str, object]] = []
-    liquidacion_manifests_sorted = sorted(
-        liquidacion_manifests,
-        key=lambda row: (str(row.manifiesto_numero or ""), row.id),
-    )
-    avansat_lookup = avansat_prefetched or {}
-    for manifest_row in liquidacion_manifests_sorted:
-        manifiesto = _normalize_manifiesto_for_lookup(manifest_row.manifiesto_numero)
-        avansat = avansat_lookup.get(manifiesto) or {}
-        remesas = avansat.get("remesas") if isinstance(avansat.get("remesas"), list) else []
-        remesas_rows = [r for r in remesas if isinstance(r, dict)]
-        if not remesas_rows:
-            remesas_rows = [{"remesa": avansat.get("remesa") or "", "producto": avansat.get("producto") or ""}]
-
-        financials = manifest_financials.get(manifiesto, {"valor_tercero": 0.0, "valor_cliente": 0.0})
-        valor_tercero = _as_float(financials.get("valor_tercero"))
-        valor_cliente = _as_float(financials.get("valor_cliente"))
-        ganancia = valor_cliente - valor_tercero
-        rentabilidad = (ganancia / valor_cliente * 100) if valor_cliente > 0 else 0.0
-        placa = str(avansat.get("placa_vehiculo") or "").strip().upper() or "SIN_PLACA"
-
-        manifest_entries.append(
-            {
-                "placa": placa,
-                "manifiesto": manifiesto,
-                "fecha_emision": avansat.get("fecha_emision") or "",
-                "trayler": avansat.get("trayler") or "",
-                "ciudad_origen": avansat.get("ciudad_origen") or "",
-                "ciudad_destino": avansat.get("ciudad_destino") or "",
-                "remesas": remesas_rows,
-                "valor_tercero": valor_tercero,
-                "valor_cliente": valor_cliente,
-                "rentabilidad": rentabilidad,
-                "ganancia": ganancia,
-            }
-        )
-
-    manifest_entries.sort(key=lambda row: (str(row["placa"]), str(row["manifiesto"])))
-
-    if not manifest_entries:
-        ws_quincena.append(["Sin manifiestos asociados a liquidacion contrato fijo"])
-        ws_quincena.cell(row=2, column=1).font = Font(italic=True, color="6B7280")
-    else:
-        current_row = 2
-        total_general_tercero = 0.0
-        total_general_cliente = 0.0
-        placas = sorted({str(row["placa"]) for row in manifest_entries})
-
-        for plate_index, placa in enumerate(placas):
-            plate_rows = [row for row in manifest_entries if str(row["placa"]) == placa]
-            total_placa_tercero = 0.0
-            total_placa_cliente = 0.0
-
-            liquidacion_totals = liquidacion_totals_by_placa.get(placa)
-            if liquidacion_totals:
-                total_placa_tercero = _as_float(liquidacion_totals.get("valor_tercero"))
-                total_placa_cliente = _as_float(liquidacion_totals.get("valor_cliente"))
-            else:
-                # Fallback: si no hay registro de liquidacion para la placa, conserva suma por manifiestos.
-                total_placa_tercero = sum(_as_float(row.get("valor_tercero")) for row in plate_rows)
-                total_placa_cliente = sum(_as_float(row.get("valor_cliente")) for row in plate_rows)
-
-            manifest_count = len(plate_rows)
-            per_manifest_tercero = _split_total_evenly(total_placa_tercero, manifest_count)
-            per_manifest_cliente = _split_total_evenly(total_placa_cliente, manifest_count)
-
-            if plate_index > 0:
-                current_row += 2
-                _write_quincena_block_header(current_row)
-                current_row += 1
-
-            for entry_idx, entry in enumerate(plate_rows):
-                remesas_rows = entry["remesas"] if isinstance(entry["remesas"], list) else []
-                manifest_valor_tercero = per_manifest_tercero[entry_idx] if entry_idx < len(per_manifest_tercero) else 0.0
-                manifest_valor_cliente = per_manifest_cliente[entry_idx] if entry_idx < len(per_manifest_cliente) else 0.0
-                manifest_ganancia = manifest_valor_cliente - manifest_valor_tercero
-                manifest_rentabilidad = (
-                    (manifest_ganancia / manifest_valor_cliente * 100) if manifest_valor_cliente > 0 else 0.0
-                )
-                first_row_for_manifest = True
-                for remesa_row in remesas_rows:
-                    row_values: dict[str, object] = {
-                        "Manifiesto": entry["manifiesto"],
-                        "Fecha Emision": entry["fecha_emision"],
-                        "Placa Vehiculo": entry["placa"],
-                        "Trayler": entry["trayler"],
-                        "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
-                        "Producto": str((remesa_row or {}).get("producto") or "").strip(),
-                        "Ciudad Origen": entry["ciudad_origen"],
-                        "Ciudad Destino": entry["ciudad_destino"],
-                    }
-                    if show_tarifa_tercero:
-                        row_values["Valor Tercero"] = manifest_valor_tercero if first_row_for_manifest else None
-                    if show_tarifa_cliente:
-                        row_values["Valor Cliente"] = manifest_valor_cliente if first_row_for_manifest else None
-                    if show_cointra_financials:
-                        row_values["Rentabilidad"] = manifest_rentabilidad if first_row_for_manifest else None
-                        row_values["Ganancia Cointra"] = manifest_ganancia if first_row_for_manifest else None
-
-                    for header, col_idx in quincena_col_idx.items():
-                        cell = ws_quincena.cell(row=current_row, column=col_idx, value=row_values.get(header, ""))
-                        cell.border = border
-                        if header in {"Valor Tercero", "Valor Cliente", "Ganancia Cointra"} and cell.value is not None:
-                            cell.number_format = cop_format
-                        if header == "Rentabilidad" and cell.value is not None:
-                            cell.number_format = pct_format
-                    current_row += 1
-                    first_row_for_manifest = False
-
-            total_general_tercero += total_placa_tercero
-            total_general_cliente += total_placa_cliente
-
-            ws_quincena.cell(row=current_row, column=quincena_col_idx["Ciudad Destino"], value=f"TOTAL PLACA {placa}")
-            total_placa_cells_to_fill = [quincena_col_idx["Ciudad Destino"]]
-            if "Valor Tercero" in quincena_col_idx:
-                c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Valor Tercero"], value=total_placa_tercero)
-                c.number_format = cop_format
-                total_placa_cells_to_fill.append(quincena_col_idx["Valor Tercero"])
-            if "Valor Cliente" in quincena_col_idx:
-                c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Valor Cliente"], value=total_placa_cliente)
-                c.number_format = cop_format
-                total_placa_cells_to_fill.append(quincena_col_idx["Valor Cliente"])
-            if "Rentabilidad" in quincena_col_idx:
-                placa_ganancia = total_placa_cliente - total_placa_tercero
-                placa_rentabilidad = (placa_ganancia / total_placa_cliente * 100) if total_placa_cliente > 0 else 0.0
-                c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Rentabilidad"], value=placa_rentabilidad)
-                c.number_format = pct_format
-                total_placa_cells_to_fill.append(quincena_col_idx["Rentabilidad"])
-            if "Ganancia Cointra" in quincena_col_idx:
-                c = ws_quincena.cell(
-                    row=current_row,
-                    column=quincena_col_idx["Ganancia Cointra"],
-                    value=total_placa_cliente - total_placa_tercero,
-                )
-                c.number_format = cop_format
-                total_placa_cells_to_fill.append(quincena_col_idx["Ganancia Cointra"])
-
-            for col_idx in range(1, len(quincena_headers) + 1):
-                cell = ws_quincena.cell(row=current_row, column=col_idx)
-                cell.font = section_font
-                cell.border = border
-            for col_idx in total_placa_cells_to_fill:
-                ws_quincena.cell(row=current_row, column=col_idx).fill = section_fill
-            current_row += 1
-
-        current_row += 2
-        ws_quincena.cell(row=current_row, column=quincena_col_idx["Ciudad Destino"], value="TOTAL GENERAL")
-        total_general_cells_to_fill = [quincena_col_idx["Ciudad Destino"]]
-        if "Valor Tercero" in quincena_col_idx:
-            c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Valor Tercero"], value=total_general_tercero)
-            c.number_format = cop_format
-            total_general_cells_to_fill.append(quincena_col_idx["Valor Tercero"])
-        if "Valor Cliente" in quincena_col_idx:
-            c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Valor Cliente"], value=total_general_cliente)
-            c.number_format = cop_format
-            total_general_cells_to_fill.append(quincena_col_idx["Valor Cliente"])
-        if "Rentabilidad" in quincena_col_idx:
-            total_ganancia = total_general_cliente - total_general_tercero
-            total_rentabilidad = (total_ganancia / total_general_cliente * 100) if total_general_cliente > 0 else 0.0
-            c = ws_quincena.cell(row=current_row, column=quincena_col_idx["Rentabilidad"], value=total_rentabilidad)
-            c.number_format = pct_format
-            total_general_cells_to_fill.append(quincena_col_idx["Rentabilidad"])
-        if "Ganancia Cointra" in quincena_col_idx:
-            c = ws_quincena.cell(
-                row=current_row,
-                column=quincena_col_idx["Ganancia Cointra"],
-                value=total_general_cliente - total_general_tercero,
-            )
-            c.number_format = cop_format
-            total_general_cells_to_fill.append(quincena_col_idx["Ganancia Cointra"])
-
-        for col_idx in range(1, len(quincena_headers) + 1):
-            cell = ws_quincena.cell(row=current_row, column=col_idx)
-            cell.font = section_font
-            cell.border = border
-        for col_idx in total_general_cells_to_fill:
-            ws_quincena.cell(row=current_row, column=col_idx).fill = section_fill
-
-    quincena_widths = {
-        "Manifiesto": 20,
-        "Fecha Emision": 18,
-        "Placa Vehiculo": 20,
-        "Trayler": 18,
-        "Remesa": 20,
-        "Producto": 40,
-        "Ciudad Origen": 24,
-        "Ciudad Destino": 24,
-        "Valor Tercero": 20,
-        "Valor Cliente": 20,
-        "Rentabilidad": 16,
-        "Ganancia Cointra": 22,
-    }
-    for header, idx in quincena_col_idx.items():
-        ws_quincena.column_dimensions[get_column_letter(idx)].width = quincena_widths.get(header, 18)
-
-    # Hoja 3: servicios (manifiestos del contexto conciliacion + datos Avansat)
+    # Hoja 2: servicios (manifiestos del contexto conciliacion + datos Avansat)
     manifest_financials_servicios: dict[str, dict[str, float]] = {}
     servicios_totals_by_placa: dict[str, dict[str, float]] = {}
     for additional_item, _ in additional_items:
@@ -2286,12 +1982,6 @@ def create_liquidacion_contrato_fijo(
     if payload.periodo_inicio > payload.periodo_fin:
         raise HTTPException(status_code=400, detail="El periodo de inicio no puede ser mayor al periodo final")
 
-    if payload.incluir_conductor_relevo and _has_conductor_relevo_liquidacion(db, conc.id):
-        raise HTTPException(
-            status_code=400,
-            detail="Ya existe un conductor relevo en la liquidacion de contrato fijo de esta conciliacion",
-        )
-
     liquidacion_id = payload.liquidacion_id
     if liquidacion_id is None:
         liquidacion_id = _next_liquidacion_id(db, conc.id)
@@ -2368,57 +2058,6 @@ def create_liquidacion_contrato_fijo(
             ),
         )
 
-        if payload.incluir_conductor_relevo:
-            relevo_tarifa_tercero = (
-                float(payload.valor_tercero_relevo)
-                if payload.relevo_con_valor and payload.valor_tercero_relevo is not None
-                else (float(payload.valor_tercero) if payload.relevo_con_valor else 0.0)
-            )
-
-            relevo_item = ConciliacionItem(
-                conciliacion_id=conc.id,
-                tipo=ItemTipo.CONDUCTOR_RELEVO,
-                fecha_servicio=payload.periodo_fin,
-                origen="Liquidacion Contrato Fijo",
-                destino="Conductor relevo",
-                placa=placa,
-                conductor="CONDUCTOR RELEVO",
-                tarifa_tercero=relevo_tarifa_tercero,
-                tarifa_cliente=None,
-                rentabilidad=None,
-                manifiesto_numero=None,
-                remesa=None,
-                descripcion=_build_liquidacion_metadata(
-                    liquidacion_id,
-                    payload.periodo_inicio,
-                    payload.periodo_fin,
-                    es_relevo=True,
-                    relevo_con_valor=payload.relevo_con_valor,
-                ),
-                created_by=user.id,
-                cargado_por=user.rol.value,
-            )
-            if relevo_tarifa_tercero > 0:
-                apply_rentabilidad(relevo_item, operacion)
-            else:
-                relevo_item.tarifa_cliente = 0
-                relevo_item.rentabilidad = float(operacion.porcentaje_rentabilidad)
-
-            db.add(relevo_item)
-            db.flush()
-            created_rows.append(relevo_item)
-            log_change(
-                db,
-                usuario_id=user.id,
-                conciliacion_id=conc.id,
-                item_id=relevo_item.id,
-                campo="liquidacion_conductor_relevo_creada",
-                valor_nuevo=(
-                    f"liquidacion_id={liquidacion_id}; placa={placa}; periodo={payload.periodo_inicio} a {payload.periodo_fin}; "
-                    f"con_valor={payload.relevo_con_valor}; valor_tercero={relevo_tarifa_tercero}"
-                ),
-            )
-
     _mark_borrador_dirty(conc)
 
     db.commit()
@@ -2494,11 +2133,10 @@ def create_manifiesto(
     liquidacion_contrato_fijo_id = payload.liquidacion_contrato_fijo_id
 
     if contexto == MANIFIESTO_CONTEXTO_LIQUIDACION:
-        if liquidacion_contrato_fijo_id is not None and not _liquidacion_exists(db, conc.id, liquidacion_contrato_fijo_id):
-            raise HTTPException(
-                status_code=400,
-                detail="La liquidacion indicada no existe en esta conciliacion",
-            )
+        raise HTTPException(
+            status_code=400,
+            detail="La asociación de manifiestos para liquidación contrato fijo está deshabilitada",
+        )
     else:
         liquidacion_contrato_fijo_id = None
 
@@ -3201,22 +2839,8 @@ def enviar_facturacion_conciliacion(
         .order_by(ConciliacionManifiesto.id.asc())
         .all()
     )
-    liquidacion_manifests = (
-        db.query(ConciliacionManifiesto)
-        .filter(
-            ConciliacionManifiesto.conciliacion_id == conciliacion_id,
-            ConciliacionManifiesto.contexto == MANIFIESTO_CONTEXTO_LIQUIDACION,
-        )
-        .order_by(ConciliacionManifiesto.id.asc())
-        .all()
-    )
-    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests, liquidacion_manifests)
-    _validate_manifests_match_plates_or_raise(
-        items,
-        liquidacion_manifests,
-        avansat_prefetched,
-        MANIFIESTO_CONTEXTO_LIQUIDACION,
-    )
+    liquidacion_manifests: list[ConciliacionManifiesto] = []
+    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests)
     _validate_manifests_match_plates_or_raise(
         items,
         manifests,
@@ -3242,7 +2866,6 @@ def enviar_facturacion_conciliacion(
         conc,
         items,
         manifests,
-        liquidacion_manifests,
         user.rol,
         tipo_vehiculo_by_placa,
         avansat_prefetched,
@@ -3433,22 +3056,8 @@ def descargar_conciliacion_excel(
         .order_by(ConciliacionManifiesto.id.asc())
         .all()
     )
-    liquidacion_manifests = (
-        db.query(ConciliacionManifiesto)
-        .filter(
-            ConciliacionManifiesto.conciliacion_id == conciliacion_id,
-            ConciliacionManifiesto.contexto == MANIFIESTO_CONTEXTO_LIQUIDACION,
-        )
-        .order_by(ConciliacionManifiesto.id.asc())
-        .all()
-    )
-    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests, liquidacion_manifests)
-    _validate_manifests_match_plates_or_raise(
-        items,
-        liquidacion_manifests,
-        avansat_prefetched,
-        MANIFIESTO_CONTEXTO_LIQUIDACION,
-    )
+    liquidacion_manifests: list[ConciliacionManifiesto] = []
+    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests)
     _validate_manifests_match_plates_or_raise(
         items,
         manifests,
@@ -3474,7 +3083,6 @@ def descargar_conciliacion_excel(
         conc,
         items,
         manifests,
-        liquidacion_manifests,
         user.rol,
         tipo_vehiculo_by_placa,
         avansat_prefetched,
