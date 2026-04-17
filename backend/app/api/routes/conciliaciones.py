@@ -353,20 +353,21 @@ def _find_last_status_actor(db: Session, conc: Conciliacion) -> tuple[str | None
 def _build_conciliacion_totals_map(db: Session, conciliacion_ids: list[int]) -> dict[int, tuple[float, float]]:
     if not conciliacion_ids:
         return {}
-    rows = (
-        db.query(
-            ConciliacionItem.conciliacion_id,
-            func.coalesce(func.sum(ConciliacionItem.tarifa_cliente), 0),
-            func.coalesce(func.sum(ConciliacionItem.tarifa_tercero), 0),
-        )
+    items = (
+        db.query(ConciliacionItem)
         .filter(ConciliacionItem.conciliacion_id.in_(conciliacion_ids))
-        .group_by(ConciliacionItem.conciliacion_id)
         .all()
     )
-    return {
-        int(conciliacion_id): (float(total_cliente or 0), float(total_tercero or 0))
-        for conciliacion_id, total_cliente, total_tercero in rows
-    }
+    totals_map: dict[int, tuple[float, float]] = {}
+    for item in items:
+        if _extract_liquidacion_metadata(item):
+            continue
+        current_cliente, current_tercero = totals_map.get(int(item.conciliacion_id), (0.0, 0.0))
+        totals_map[int(item.conciliacion_id)] = (
+            current_cliente + float(item.tarifa_cliente or 0),
+            current_tercero + float(item.tarifa_tercero or 0),
+        )
+    return totals_map
 
 
 def _build_conciliacion_estado_timestamps(db: Session, conciliacion_id: int, created_at: object) -> dict[str, object | None]:

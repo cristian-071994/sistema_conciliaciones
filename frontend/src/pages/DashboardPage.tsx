@@ -218,6 +218,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     placa: "",
     manifiesto: "",
   });
+  const [filtrosTablaItemsViajeBajoLiquidacion, setFiltrosTablaItemsViajeBajoLiquidacion] = useState({
+    id: "",
+    tipo: "",
+    estado: "",
+    fecha: "",
+    origen: "",
+    destino: "",
+    placa: "",
+    manifiesto: "",
+  });
   const [filtroEstadoConciliacion, setFiltroEstadoConciliacion] = useState<"TODOS" | "BORRADOR" | "EN_REVISION" | "APROBADA" | "ENVIADA_A_FACTURAR" | "FACTURADO">("TODOS");
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState("");
   const [highlightSelectedConciliacion, setHighlightSelectedConciliacion] = useState(false);
@@ -636,6 +646,34 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       );
     });
   }, [itemsConciliacion, filtrosTablaItemsConciliacion]);
+  const itemsViajeBajoLiquidacionFiltrados = useMemo(() => {
+    const normalize = (value: string | number | null | undefined) =>
+      String(value ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .trim();
+
+    const includesFilter = (value: string | number | null | undefined, filterValue: string) => {
+      if (!filterValue.trim()) return true;
+      return normalize(value).includes(normalize(filterValue));
+    };
+
+    return itemsViajeBajoLiquidacion.filter((item) => {
+      const tipoLabel = getItemServicioLabel(item);
+      const estadoLabel = item.estado.toUpperCase();
+      return (
+        includesFilter(item.viaje_id ?? item.id, filtrosTablaItemsViajeBajoLiquidacion.id) &&
+        includesFilter(tipoLabel, filtrosTablaItemsViajeBajoLiquidacion.tipo) &&
+        includesFilter(estadoLabel, filtrosTablaItemsViajeBajoLiquidacion.estado) &&
+        includesFilter(item.fecha_servicio, filtrosTablaItemsViajeBajoLiquidacion.fecha) &&
+        includesFilter(item.origen, filtrosTablaItemsViajeBajoLiquidacion.origen) &&
+        includesFilter(item.destino, filtrosTablaItemsViajeBajoLiquidacion.destino) &&
+        includesFilter(item.placa, filtrosTablaItemsViajeBajoLiquidacion.placa) &&
+        includesFilter(item.manifiesto_numero, filtrosTablaItemsViajeBajoLiquidacion.manifiesto)
+      );
+    });
+  }, [itemsViajeBajoLiquidacion, filtrosTablaItemsViajeBajoLiquidacion]);
   const itemsLiquidacion = useMemo(
     () => items.filter((item) => !!item.liquidacion_contrato_fijo),
     [items]
@@ -693,6 +731,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const allClientItemsConciliacionChecked =
     user.rol === "CLIENTE" && itemsConciliacion.length > 0
       ? itemsConciliacion.every((item) => clientItemSelections[item.id] === true)
+      : false;
+  const allClientItemsViajesBajoLiquidacionChecked =
+    user.rol === "CLIENTE" && itemsViajeBajoLiquidacion.length > 0
+      ? itemsViajeBajoLiquidacion.every((item) => clientItemSelections[item.id] === true)
       : false;
   const allClientItemsLiquidacionChecked =
     user.rol === "CLIENTE" && itemsLiquidacion.length > 0
@@ -2805,25 +2847,132 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             </p>
                           </div>
                           <div className="overflow-x-auto">
-                            <table className="min-w-full border-collapse text-xs">
+                            <table className="min-w-full border-collapse text-sm">
                               <thead>
-                                <tr className="bg-indigo-100/70 text-indigo-900">
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">ID</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Fecha</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Origen</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Destino</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Placa</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Manifiesto</th>
-                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Estado</th>
+                                <tr className="bg-indigo-100/70 text-xs font-semibold uppercase tracking-wide text-indigo-900">
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">ID</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Tipo</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Estado</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Fecha</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Origen</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Destino</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Placa</th>
+                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Manifiesto</th>
                                   {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
-                                    <th className="border-b border-indigo-100 px-2 py-1 text-left">Aprobación</th>
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">
+                                      <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-indigo-900">
+                                        <input
+                                          type="checkbox"
+                                          checked={allClientItemsViajesBajoLiquidacionChecked}
+                                          onChange={(e) => {
+                                            const checked = e.target.checked;
+                                            setClientItemSelections((prev) => {
+                                              const next = { ...prev };
+                                              for (const it of itemsViajeBajoLiquidacion) {
+                                                next[it.id] = checked;
+                                              }
+                                              return next;
+                                            });
+                                          }}
+                                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                                        />
+                                        Aprobar todos
+                                      </label>
+                                    </th>
                                   )}
+                                  {user.rol !== "CLIENTE" && (
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">Tarifa Tercero</th>
+                                  )}
+                                  {user.rol !== "TERCERO" && (
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">Tarifa Cliente</th>
+                                  )}
+                                  {user.rol === "COINTRA" && (
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">Ganancia Cointra</th>
+                                  )}
+                                  {user.rol === "COINTRA" && (
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">Rentabilidad %</th>
+                                  )}
+                                  {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
+                                    <th className="border-b border-indigo-100 px-3 py-2 text-left">Acciones</th>
+                                  )}
+                                </tr>
+                                <tr className="bg-white text-xs text-slate-600">
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.id}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, id: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.tipo}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, tipo: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.estado}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, estado: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.fecha}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, fecha: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.origen}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, origen: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.destino}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, destino: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.placa}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, placa: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  <th className="border-b border-indigo-100 px-3 py-1.5">
+                                    <input
+                                      value={filtrosTablaItemsViajeBajoLiquidacion.manifiesto}
+                                      onChange={(e) => setFiltrosTablaItemsViajeBajoLiquidacion((prev) => ({ ...prev, manifiesto: e.target.value }))}
+                                      placeholder="Filtrar"
+                                      className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                                    />
+                                  </th>
+                                  {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
+                                  {user.rol !== "CLIENTE" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
+                                  {user.rol !== "TERCERO" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
+                                  {user.rol === "COINTRA" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
+                                  {user.rol === "COINTRA" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
+                                  {user.rol === "COINTRA" && selected.estado === "BORRADOR" && <th className="border-b border-indigo-100 px-3 py-1.5" />}
                                 </tr>
                               </thead>
                               <tbody>
-                                {itemsViajeBajoLiquidacion.map((item) => (
+                                {itemsViajeBajoLiquidacionFiltrados.map((item) => (
                                   <tr key={item.id} className="border-b border-indigo-50 last:border-0">
-                                    <td className="px-2 py-1">
+                                    <td className="px-3 py-2">
                                       {item.viaje_id ? (
                                         <button
                                           type="button"
@@ -2836,11 +2985,27 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                         "-"
                                       )}
                                     </td>
-                                    <td className="px-2 py-1">{item.fecha_servicio || "-"}</td>
-                                    <td className="px-2 py-1">{item.origen || "-"}</td>
-                                    <td className="px-2 py-1">{item.destino || "-"}</td>
-                                    <td className="px-2 py-1">{item.placa || "-"}</td>
-                                    <td className="px-2 py-1">
+                                    <td className="px-3 py-2">
+                                      <div className="font-medium text-slate-900">{getItemServicioLabel(item)}</div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span
+                                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                          item.estado === "RECHAZADO"
+                                            ? "bg-red-100 text-red-700"
+                                            : item.estado === "APROBADO"
+                                              ? "bg-emerald-100 text-emerald-700"
+                                              : "bg-slate-100 text-slate-600"
+                                        }`}
+                                      >
+                                        {item.estado.toUpperCase()}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2">{item.fecha_servicio || "-"}</td>
+                                    <td className="px-3 py-2">{item.origen || "-"}</td>
+                                    <td className="px-3 py-2">{item.destino || "-"}</td>
+                                    <td className="px-3 py-2">{item.placa || "-"}</td>
+                                    <td className="px-3 py-2">
                                       {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
                                         <EditableCell
                                           initialValue={String(item.manifiesto_numero ?? "")}
@@ -2857,21 +3022,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                         item.manifiesto_numero || "-"
                                       )}
                                     </td>
-                                    <td className="px-2 py-1">
-                                      <span
-                                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                          item.estado === "RECHAZADO"
-                                            ? "bg-red-100 text-red-700"
-                                            : item.estado === "APROBADO"
-                                              ? "bg-emerald-100 text-emerald-700"
-                                              : "bg-slate-100 text-slate-600"
-                                        }`}
-                                      >
-                                        {item.estado.toUpperCase()}
-                                      </span>
-                                    </td>
                                     {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
-                                      <td className="px-2 py-1 text-center">
+                                      <td className="px-3 py-2 text-center">
                                         <input
                                           type="checkbox"
                                           checked={!!clientItemSelections[item.id]}
@@ -2885,15 +3037,122 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                         />
                                       </td>
                                     )}
+                                    {user.rol !== "CLIENTE" && (
+                                      <td className="px-3 py-2">
+                                        {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
+                                          <EditableCell
+                                            initialValue={String(item.tarifa_tercero ?? "")}
+                                            type="number"
+                                            onSave={async (val) => {
+                                              await patchItemAndSync(item.id, { tarifa_tercero: Number(val) });
+                                            }}
+                                            placeholder="0"
+                                            helperText={
+                                              item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
+                                                ? `Actual: ${formatCOP(item.tarifa_tercero)}`
+                                                : "Actual: -"
+                                            }
+                                            className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                          />
+                                        ) : (
+                                          formatCOP(item.tarifa_tercero)
+                                        )}
+                                      </td>
+                                    )}
+                                    {user.rol !== "TERCERO" && (
+                                      <td className="px-3 py-2">
+                                        {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
+                                          <EditableCell
+                                            initialValue={String(item.tarifa_cliente ?? "")}
+                                            type="number"
+                                            onSave={async (val) => {
+                                              await patchItemAndSync(item.id, { tarifa_cliente: Number(val) });
+                                            }}
+                                            placeholder="0"
+                                            helperText={
+                                              item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
+                                                ? `Actual: ${formatCOP(item.tarifa_cliente)}`
+                                                : "Actual: -"
+                                            }
+                                            className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                          />
+                                        ) : (
+                                          formatCOP(item.tarifa_cliente)
+                                        )}
+                                      </td>
+                                    )}
+                                    {user.rol === "COINTRA" && (
+                                      <td className="px-3 py-2">
+                                        {formatMoney(getGananciaCointra(item.tarifa_cliente, item.tarifa_tercero))}
+                                      </td>
+                                    )}
+                                    {user.rol === "COINTRA" && (
+                                      <td className="px-3 py-2">
+                                        {selected.estado === "BORRADOR" ? (
+                                          <div className="space-y-1">
+                                            <EditableCell
+                                              initialValue={String(item.rentabilidad ?? "")}
+                                              type="number"
+                                              onSave={async (val) => {
+                                                await patchItemAndSync(item.id, { rentabilidad: Number(val) });
+                                              }}
+                                              placeholder="%"
+                                              className="w-20 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                            />
+                                            <p className="text-[11px] text-neutral">
+                                              Valor: {formatMoney(getGananciaCointra(item.tarifa_cliente, item.tarifa_tercero))}
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <span>
+                                              {item.rentabilidad !== null && item.rentabilidad !== undefined
+                                                ? `${item.rentabilidad.toFixed(1)}%`
+                                                : "-"}
+                                            </span>
+                                            <p className="text-[11px] text-neutral">
+                                              Valor: {formatMoney(getGananciaCointra(item.tarifa_cliente, item.tarifa_tercero))}
+                                            </p>
+                                          </>
+                                        )}
+                                      </td>
+                                    )}
+                                    {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
+                                      <td className="px-3 py-2">
+                                        {item.viaje_id ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => void removeViajeFromConciliacion(item.viaje_id as number)}
+                                            className="inline-flex items-center rounded-full border border-danger/30 bg-danger/5 px-2.5 py-1 text-xs font-semibold text-danger transition hover:bg-danger/10"
+                                          >
+                                            Quitar
+                                          </button>
+                                        ) : (
+                                          "-"
+                                        )}
+                                      </td>
+                                    )}
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
                           </div>
-                          <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-semibold text-indigo-900">
-                            <span>Total tercero: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
-                            <span>Total cliente: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
-                            <span>Total ganancia Cointra: {formatMoney(totalsViajesBajoLiquidacion.gananciaCointra)}</span>
+                          <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold text-indigo-900">
+                            {user.rol === "TERCERO" && (
+                              <span>Total a cobrar: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
+                            )}
+                            {user.rol === "CLIENTE" && (
+                              <span>Total a pagar: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
+                            )}
+                            {user.rol === "COINTRA" && (
+                              <span>Total Tercero: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
+                            )}
+                            {user.rol === "COINTRA" && (
+                              <span>Total Cliente: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
+                            )}
+                            {user.rol === "COINTRA" && (
+                              <span>Total Ganancia Cointra: {formatMoney(totalsViajesBajoLiquidacion.gananciaCointra)}</span>
+                            )}
                           </div>
                         </div>
                       )}
