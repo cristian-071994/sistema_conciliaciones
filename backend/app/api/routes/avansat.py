@@ -6,6 +6,7 @@ from sqlalchemy import desc
 from app.api.deps import get_current_user, is_cointra_admin
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.conciliacion_item import ConciliacionItem
 from app.models.conciliacion_manifiesto import ConciliacionManifiesto
 from app.models.manifiesto_avansat import ManifiestoAvansat
 from app.models.enums import UserRole
@@ -165,9 +166,9 @@ def avansat_cache_list(
     query = db.query(ManifiestoAvansat)
     if conciliacion_id is not None:
         query = query.join(
-            ConciliacionManifiesto,
-            ConciliacionManifiesto.manifiesto_numero == ManifiestoAvansat.manifiesto_numero,
-        ).filter(ConciliacionManifiesto.conciliacion_id == conciliacion_id)
+            ConciliacionItem,
+            ConciliacionItem.manifiesto_numero == ManifiestoAvansat.manifiesto_numero,
+        ).filter(ConciliacionItem.conciliacion_id == conciliacion_id)
     if manifiesto:
         query = query.filter(ManifiestoAvansat.manifiesto_numero.contains(manifiesto.strip()))
     if fecha_emision:
@@ -196,15 +197,21 @@ def avansat_cache_list(
     )
 
     manifest_numbers = [row.manifiesto_numero for row in rows]
-    conciliacion_by_manifest: dict[str, tuple[int, str]] = {}
+    conciliacion_by_manifest: dict[str, tuple[int, str | None]] = {}
     if manifest_numbers:
         links = (
-            db.query(ConciliacionManifiesto)
-            .filter(ConciliacionManifiesto.manifiesto_numero.in_(manifest_numbers))
+            db.query(
+                ConciliacionItem.manifiesto_numero,
+                ConciliacionItem.conciliacion_id,
+            )
+            .filter(
+                ConciliacionItem.manifiesto_numero.in_(manifest_numbers),
+                ConciliacionItem.manifiesto_numero.isnot(None),
+            )
             .all()
         )
         for link in links:
-            conciliacion_by_manifest[link.manifiesto_numero] = (link.conciliacion_id, link.contexto)
+            conciliacion_by_manifest[link.manifiesto_numero] = (link.conciliacion_id, None)
 
     payload_rows = [
         AvansatCacheRowOut(

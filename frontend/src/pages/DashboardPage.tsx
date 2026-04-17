@@ -258,6 +258,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState("");
   const [highlightSelectedConciliacion, setHighlightSelectedConciliacion] = useState(false);
   const [clientItemSelections, setClientItemSelections] = useState<Record<number, boolean>>({});
+  const [draftManifiestosByItemId, setDraftManifiestosByItemId] = useState<Record<number, string>>({});
+  const [savingManifiestosBlock, setSavingManifiestosBlock] = useState<"viajes_bajo_liquidacion" | "servicios_adicionales" | null>(null);
+  const [manifiestoValidation, setManifiestoValidation] = useState<Record<number, "idle" | "validating" | "ok" | "error">>({});
+  const [manifiestoErrorMsg, setManifiestoErrorMsg] = useState<Record<number, string>>({});
+  const [editingManifiestoItemId, setEditingManifiestoItemId] = useState<number | null>(null);
+  const [editManifiestoDraft, setEditManifiestoDraft] = useState("");
+  const [editManifiestoSaving, setEditManifiestoSaving] = useState(false);
+  const [editManifiestoError, setEditManifiestoError] = useState("");
+  const [confirmDeleteManifiestoItemId, setConfirmDeleteManifiestoItemId] = useState<number | null>(null);
   const [clientDecisionError, setClientDecisionError] = useState("");
   const [clientDecisionModal, setClientDecisionModal] = useState<{
     action: "aprobar" | "devolver";
@@ -901,6 +910,70 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     try {
       const itemData = await api.items(conciliacionId);
       setItems(itemData);
+      const nextDrafts: Record<number, string> = {};
+      for (const item of itemData) {
+        nextDrafts[item.id] = String(item.manifiesto_numero ?? "");
+      }
+      setDraftManifiestosByItemId(nextDrafts);
+      setManifiestoValidation({});
+      setManifiestoErrorMsg({});
+      // Validar automáticamente los items que ya tienen manifiesto asociado
+      if (user.rol === "COINTRA") {
+        const itemsConManifiesto = itemData.filter((it) => (it.manifiesto_numero ?? "").trim() !== "");
+        if (itemsConManifiesto.length > 0) {
+          // Agrupar items por manifiesto para hacer una sola consulta por número único
+          const uniqueManifiestos = [...new Set(itemsConManifiesto.map((it) => (it.manifiesto_numero ?? "").trim()))];
+          void (async () => {
+            try {
+              const cacheByManifiesto = new Map<string, { conciliacion_id: number | null; placa_vehiculo: string | null }>();
+              for (const mNum of uniqueManifiestos) {
+                const result = await api.avansatCache({ manifiesto: mNum, page_size: 10 });
+                const match = result.rows.find((r) => r.manifiesto_numero.trim() === mNum);
+                if (match) cacheByManifiesto.set(mNum, match);
+              }
+              const nextValidation: Record<number, "idle" | "ok" | "error"> = {};
+              const nextErrors: Record<number, string> = {};
+              for (const item of itemsConManifiesto) {
+                const mNum = (item.manifiesto_numero ?? "").trim();
+                const cached = cacheByManifiesto.get(mNum);
+                if (!cached) {
+                  nextValidation[item.id] = "error";
+                  nextErrors[item.id] = "Manifiesto no encontrado en cache de Avansat";
+                  continue;
+                }
+                if (cached.conciliacion_id) {
+                  const esManifiestoPropio = (item.manifiesto_numero ?? "").trim() === mNum;
+                  if (!esManifiestoPropio) {
+                    nextValidation[item.id] = "error";
+                    nextErrors[item.id] = `Manifiesto ya asociado a conciliación #${cached.conciliacion_id}`;
+                    continue;
+                  }
+                }
+                const duplicado = itemsConManifiesto.some(
+                  (other) => other.id !== item.id && (other.manifiesto_numero ?? "").trim() === mNum
+                );
+                if (duplicado) {
+                  nextValidation[item.id] = "error";
+                  nextErrors[item.id] = "Manifiesto duplicado en otro viaje de esta conciliación";
+                  continue;
+                }
+                const placaItem = (item.placa ?? "").trim().toUpperCase();
+                const placaAvansat = (cached.placa_vehiculo ?? "").trim().toUpperCase();
+                if (!placaItem || !placaAvansat || placaAvansat !== placaItem) {
+                  nextValidation[item.id] = "error";
+                  nextErrors[item.id] = `Placa no coincide: servicio=${placaItem || "(vacía)"} vs Avansat=${placaAvansat || "(vacía)"}`;
+                  continue;
+                }
+                nextValidation[item.id] = "ok";
+              }
+              setManifiestoValidation((prev) => ({ ...prev, ...nextValidation }));
+              setManifiestoErrorMsg((prev) => ({ ...prev, ...nextErrors }));
+            } catch {
+              // Si falla la validación inicial, dejar idle
+            }
+          })();
+        }
+      }
       if (user.rol === "CLIENTE") {
         const initialSelections: Record<number, boolean> = {};
         for (const item of itemData) {
@@ -1524,6 +1597,146 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     const updated = await api.patchConciliacionItem(itemId, payload);
     setItems((prev) => prev.map((item) => (item.id === itemId ? updated : item)));
     await onRefreshConciliaciones();
+  }
+
+  const dirtyManifiestosViajesBajoLiquidacionCount = useMemo(() => {
+    return itemsViajeBajoLiquidacion.filter((item) => {
+      const draft = draftManifiestosByItemId[item.id] ?? "";
+      const current = String(item.manifiesto_numero ?? "");
+      return draft !== current;
+    }).length;
+  }, [itemsViajeBajoLiquidacion, draftManifiestosByItemId]);
+
+  const dirtyManifiestosServiciosAdicionalesCount = useMemo(() => {
+    return itemsConciliacion.filter((item) => {
+      const draft = draftManifiestosByItemId[item.id] ?? "";
+      const current = String(item.manifiesto_numero ?? "");
+      return draft !== current;
+    }).length;
+  }, [itemsConciliacion, draftManifiestosByItemId]);
+
+  async function guardarManifiestosPorBloque(bloque: "viajes_bajo_liquidacion" | "servicios_adicionales") {
+    const sourceItems = bloque === "viajes_bajo_liquidacion" ? itemsViajeBajoLiquidacion : itemsConciliacion;
+    const changed = sourceItems.filter((item) => {
+      const draft = (draftManifiestosByItemId[item.id] ?? "").trim();
+      const current = String(item.manifiesto_numero ?? "");
+      return draft !== current;
+    });
+    if (changed.length === 0) return;
+    setSavingManifiestosBlock(bloque);
+    try {
+      const updatedItems: Item[] = [];
+      for (const item of changed) {
+        const draft = (draftManifiestosByItemId[item.id] ?? "").trim();
+        const updated = await api.patchConciliacionItem(item.id, {
+          manifiesto_numero: draft || null,
+        });
+        updatedItems.push(updated);
+      }
+      setItems((prev) =>
+        prev.map((item) => {
+          const upd = updatedItems.find((u) => u.id === item.id);
+          return upd ?? item;
+        })
+      );
+      setDraftManifiestosByItemId((prev) => {
+        const next = { ...prev };
+        for (const u of updatedItems) {
+          next[u.id] = String(u.manifiesto_numero ?? "");
+        }
+        return next;
+      });
+      await onRefreshConciliaciones();
+      setSaveResultModal({
+        title: "Manifiestos asociados",
+        description: `Se asociaron ${changed.length} manifiesto(s) correctamente.`,
+      });
+    } catch (e) {
+      setSaveResultModal({ title: "Error al guardar manifiestos", description: toSpanishError(e) });
+    } finally {
+      setSavingManifiestosBlock(null);
+    }
+  }
+
+  async function guardarManifiestoEditado(itemId: number) {
+    const draft = editManifiestoDraft.trim();
+    if (!draft) return;
+    setEditManifiestoSaving(true);
+    setEditManifiestoError("");
+    try {
+      const updated = await api.patchConciliacionItem(itemId, { manifiesto_numero: draft });
+      setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      setDraftManifiestosByItemId((prev) => ({ ...prev, [updated.id]: String(updated.manifiesto_numero ?? "") }));
+      setEditingManifiestoItemId(null);
+      setEditManifiestoDraft("");
+      await onRefreshConciliaciones();
+    } catch (e) {
+      setEditManifiestoError(toSpanishError(e));
+    } finally {
+      setEditManifiestoSaving(false);
+    }
+  }
+
+  async function eliminarManifiestoItem(itemId: number) {
+    try {
+      const updated = await api.patchConciliacionItem(itemId, { manifiesto_numero: null });
+      setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      setDraftManifiestosByItemId((prev) => ({ ...prev, [updated.id]: "" }));
+      setManifiestoValidation((prev) => ({ ...prev, [itemId]: "idle" }));
+      setManifiestoErrorMsg((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
+      await onRefreshConciliaciones();
+    } catch (e) {
+      setSaveResultModal({ title: "Error al eliminar manifiesto", description: toSpanishError(e) });
+    }
+  }
+
+  async function validateManifiesto(itemId: number) {
+    const draft = (draftManifiestosByItemId[itemId] ?? "").trim();
+    if (!draft) {
+      setManifiestoValidation((prev) => ({ ...prev, [itemId]: "idle" }));
+      setManifiestoErrorMsg((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
+      return;
+    }
+    setManifiestoValidation((prev) => ({ ...prev, [itemId]: "validating" }));
+    try {
+      const result = await api.avansatCache({ manifiesto: draft, page_size: 10 });
+      const match = result.rows.find((r) => r.manifiesto_numero.trim() === draft);
+      if (!match) {
+        setManifiestoValidation((prev) => ({ ...prev, [itemId]: "error" }));
+        setManifiestoErrorMsg((prev) => ({ ...prev, [itemId]: "Manifiesto no encontrado en cache de Avansat" }));
+        return;
+      }
+      if (match.conciliacion_id) {
+        const currentItem = items.find((it) => it.id === itemId);
+        const esManifiestoPropio = (currentItem?.manifiesto_numero ?? "").trim() === draft;
+        if (!esManifiestoPropio) {
+          setManifiestoValidation((prev) => ({ ...prev, [itemId]: "error" }));
+          setManifiestoErrorMsg((prev) => ({ ...prev, [itemId]: `Manifiesto ya asociado a conciliación #${match.conciliacion_id}` }));
+          return;
+        }
+      }
+      const otroItemConMismoManifiesto = items.some(
+        (it) => it.id !== itemId && (it.manifiesto_numero ?? "").trim() === draft
+      );
+      if (otroItemConMismoManifiesto) {
+        setManifiestoValidation((prev) => ({ ...prev, [itemId]: "error" }));
+        setManifiestoErrorMsg((prev) => ({ ...prev, [itemId]: "Manifiesto duplicado en otro viaje de esta conciliación" }));
+        return;
+      }
+      const currentItem = items.find((it) => it.id === itemId);
+      const placaItem = (currentItem?.placa ?? "").trim().toUpperCase();
+      const placaAvansat = (match.placa_vehiculo ?? "").trim().toUpperCase();
+      if (!placaItem || !placaAvansat || placaAvansat !== placaItem) {
+        setManifiestoValidation((prev) => ({ ...prev, [itemId]: "error" }));
+        setManifiestoErrorMsg((prev) => ({ ...prev, [itemId]: `Placa no coincide: servicio=${placaItem || "(vacía)"} vs Avansat=${placaAvansat || "(vacía)"}` }));
+        return;
+      }
+      setManifiestoValidation((prev) => ({ ...prev, [itemId]: "ok" }));
+      setManifiestoErrorMsg((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
+    } catch {
+      setManifiestoValidation((prev) => ({ ...prev, [itemId]: "error" }));
+      setManifiestoErrorMsg((prev) => ({ ...prev, [itemId]: "Error al validar manifiesto" }));
+    }
   }
 
   useEffect(() => {
@@ -2575,13 +2788,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
             </>
           )}
 
-          <div>
-            <h3 className="mt-4 text-sm font-semibold text-slate-900">
-              Servicios en esta conciliación
-            </h3>
-            <p className="text-xs text-neutral">
-              Listado de servicios asociados a la conciliación #{selected.id}.
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="mt-4 text-sm font-semibold text-slate-900">
+                Servicios en esta conciliación
+              </h3>
+              <p className="text-xs text-neutral">
+                Listado de servicios asociados a la conciliación #{selected.id}.
+              </p>
+            </div>
           </div>
           {((user.rol === "COINTRA" && selected.estado === "BORRADOR") || itemsLiquidacion.length > 0) && (
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
@@ -2869,11 +3084,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
                       {itemsViajeBajoLiquidacion.length > 0 && (
                         <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
-                          <div className="mb-2">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">Servicios VIAJE</p>
-                            <p className="text-[11px] text-indigo-800/80">
-                              Estos VIAJES corresponden a la contratacion fija.
-                            </p>
+                          <div className="mb-2 flex items-center justify-between">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">Servicios VIAJE</p>
+                              <p className="text-[11px] text-indigo-800/80">
+                                Estos VIAJES corresponden a la contratacion fija.
+                              </p>
+                            </div>
+                            {user.rol === "COINTRA" && selected.estado === "BORRADOR" && dirtyManifiestosViajesBajoLiquidacionCount > 0 && (
+                              <button
+                                type="button"
+                                disabled={savingManifiestosBlock === "viajes_bajo_liquidacion"}
+                                onClick={() => void guardarManifiestosPorBloque("viajes_bajo_liquidacion")}
+                                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+                              >
+                                {savingManifiestosBlock === "viajes_bajo_liquidacion"
+                                  ? "Guardando..."
+                                  : `Relacionar manifiestos (${dirtyManifiestosViajesBajoLiquidacionCount})`}
+                              </button>
+                            )}
                           </div>
                           <div className="overflow-x-auto">
                             <table className="min-w-full border-collapse text-sm">
@@ -3036,17 +3265,69 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     <td className="px-3 py-2">{item.placa || "-"}</td>
                                     <td className="px-3 py-2">
                                       {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                                        <EditableCell
-                                          initialValue={String(item.manifiesto_numero ?? "")}
-                                          onSave={async (val) => {
-                                            await patchItemAndSync(item.id, {
-                                              manifiesto_numero: val.trim() || null,
-                                            });
-                                          }}
-                                          placeholder="Ej. 0522318"
-                                          helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : undefined}
-                                          className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                                        />
+                                        editingManifiestoItemId === item.id ? (
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="text"
+                                              value={editManifiestoDraft}
+                                              onChange={(e) => { setEditManifiestoDraft(e.target.value); setEditManifiestoError(""); }}
+                                              onKeyDown={(e) => { if (e.key === "Enter") void guardarManifiestoEditado(item.id); if (e.key === "Escape") { setEditingManifiestoItemId(null); setEditManifiestoError(""); } }}
+                                              disabled={editManifiestoSaving}
+                                              autoFocus
+                                              className="w-28 rounded border border-primary px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-primary/20"
+                                              title={editManifiestoError || ""}
+                                            />
+                                            <button type="button" disabled={editManifiestoSaving} onClick={() => void guardarManifiestoEditado(item.id)} className="rounded p-0.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50" title="Guardar">
+                                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                            </button>
+                                            <button type="button" onClick={() => { setEditingManifiestoItemId(null); setEditManifiestoError(""); }} className="rounded p-0.5 text-red-500 hover:bg-red-50" title="Cancelar">
+                                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                            {editManifiestoError && <span className="text-[10px] text-red-600 max-w-[140px] truncate" title={editManifiestoError}>{editManifiestoError}</span>}
+                                          </div>
+                                        ) : item.manifiesto_numero ? (
+                                          <span className="inline-flex items-center gap-1">
+                                            <span className="text-xs font-semibold text-emerald-700">{item.manifiesto_numero}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => { setEditingManifiestoItemId(item.id); setEditManifiestoDraft(item.manifiesto_numero || ""); setEditManifiestoError(""); }}
+                                              className="rounded p-0.5 text-slate-400 hover:text-primary hover:bg-slate-100 transition"
+                                              title="Editar manifiesto"
+                                            >
+                                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setConfirmDeleteManifiestoItemId(item.id)}
+                                              className="rounded p-0.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                                              title="Eliminar manifiesto"
+                                            >
+                                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                            </button>
+                                          </span>
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            value={draftManifiestosByItemId[item.id] ?? ""}
+                                            onChange={(e) => {
+                                              setDraftManifiestosByItemId((prev) => ({ ...prev, [item.id]: e.target.value }));
+                                              setManifiestoValidation((prev) => ({ ...prev, [item.id]: "idle" }));
+                                            }}
+                                            onBlur={() => void validateManifiesto(item.id)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter" || e.key === "Tab") void validateManifiesto(item.id);
+                                            }}
+                                            placeholder="Ej. 0522318"
+                                            title={manifiestoErrorMsg[item.id] || ""}
+                                            className={`w-32 rounded-lg border px-2 py-1.5 text-xs shadow-sm outline-none placeholder:text-slate-400 ${
+                                              manifiestoValidation[item.id] === "ok"
+                                                ? "bg-emerald-100 border-emerald-500 text-emerald-900"
+                                                : manifiestoValidation[item.id] === "error"
+                                                  ? "bg-red-100 border-red-500 text-red-900"
+                                                  : "bg-white border-border text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                            }`}
+                                          />
+                                        )
                                       ) : (
                                         item.manifiesto_numero || "-"
                                       )}
@@ -3205,6 +3486,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {dirtyManifiestosServiciosAdicionalesCount > 0 && (
+                    <button
+                      type="button"
+                      disabled={savingManifiestosBlock === "servicios_adicionales"}
+                      onClick={() => void guardarManifiestosPorBloque("servicios_adicionales")}
+                      className="inline-flex items-center rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-60"
+                    >
+                      {savingManifiestosBlock === "servicios_adicionales"
+                        ? "Guardando..."
+                        : `Relacionar manifiestos (${dirtyManifiestosServiciosAdicionalesCount})`}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void guardarConciliacionBorrador()}
@@ -3648,17 +3941,69 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">
                           {isTransportServiceItem(item) ? (
                             user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                              <EditableCell
-                                initialValue={String(item.manifiesto_numero ?? "")}
-                                onSave={async (val) => {
-                                  await patchItemAndSync(item.id, {
-                                    manifiesto_numero: val.trim() || null,
-                                  });
-                                }}
-                                placeholder="Ej. 0522318"
-                                helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : undefined}
-                                className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                              />
+                              editingManifiestoItemId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={editManifiestoDraft}
+                                    onChange={(e) => { setEditManifiestoDraft(e.target.value); setEditManifiestoError(""); }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") void guardarManifiestoEditado(item.id); if (e.key === "Escape") { setEditingManifiestoItemId(null); setEditManifiestoError(""); } }}
+                                    disabled={editManifiestoSaving}
+                                    autoFocus
+                                    className="w-28 rounded border border-primary px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-primary/20"
+                                    title={editManifiestoError || ""}
+                                  />
+                                  <button type="button" disabled={editManifiestoSaving} onClick={() => void guardarManifiestoEditado(item.id)} className="rounded p-0.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50" title="Guardar">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                  </button>
+                                  <button type="button" onClick={() => { setEditingManifiestoItemId(null); setEditManifiestoError(""); }} className="rounded p-0.5 text-red-500 hover:bg-red-50" title="Cancelar">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                  </button>
+                                  {editManifiestoError && <span className="text-[10px] text-red-600 max-w-[140px] truncate" title={editManifiestoError}>{editManifiestoError}</span>}
+                                </div>
+                              ) : item.manifiesto_numero ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="text-xs font-semibold text-emerald-700">{item.manifiesto_numero}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setEditingManifiestoItemId(item.id); setEditManifiestoDraft(item.manifiesto_numero || ""); setEditManifiestoError(""); }}
+                                    className="rounded p-0.5 text-slate-400 hover:text-primary hover:bg-slate-100 transition"
+                                    title="Editar manifiesto"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteManifiestoItemId(item.id)}
+                                    className="rounded p-0.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                                    title="Eliminar manifiesto"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  </button>
+                                </span>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={draftManifiestosByItemId[item.id] ?? ""}
+                                  onChange={(e) => {
+                                    setDraftManifiestosByItemId((prev) => ({ ...prev, [item.id]: e.target.value }));
+                                    setManifiestoValidation((prev) => ({ ...prev, [item.id]: "idle" }));
+                                  }}
+                                  onBlur={() => void validateManifiesto(item.id)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === "Tab") void validateManifiesto(item.id);
+                                  }}
+                                  placeholder="Ej. 0522318"
+                                  title={manifiestoErrorMsg[item.id] || ""}
+                                  className={`w-32 rounded-lg border px-2 py-1.5 text-xs shadow-sm outline-none placeholder:text-slate-400 ${
+                                    manifiestoValidation[item.id] === "ok"
+                                      ? "bg-emerald-100 border-emerald-500 text-emerald-900"
+                                      : manifiestoValidation[item.id] === "error"
+                                        ? "bg-red-100 border-red-500 text-red-900"
+                                        : "bg-white border-border text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                  }`}
+                                />
+                              )
                             ) : (
                               item.manifiesto_numero || "-"
                             )
@@ -3852,6 +4197,20 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         confirmText="Aceptar"
         onClose={() => setSaveResultModal(null)}
         onConfirm={async () => setSaveResultModal(null)}
+      />
+
+      <ActionModal
+        open={confirmDeleteManifiestoItemId !== null}
+        title="Eliminar manifiesto"
+        description="¿Estás seguro de que deseas eliminar la asociación del manifiesto con este viaje?"
+        confirmText="Eliminar"
+        onClose={() => setConfirmDeleteManifiestoItemId(null)}
+        onConfirm={async () => {
+          if (confirmDeleteManifiestoItemId !== null) {
+            await eliminarManifiestoItem(confirmDeleteManifiestoItemId);
+          }
+          setConfirmDeleteManifiestoItemId(null);
+        }}
       />
 
       <ActionModal

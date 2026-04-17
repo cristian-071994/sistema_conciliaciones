@@ -588,6 +588,24 @@ def _validate_transport_item_manifest_or_raise(db: Session, item: ConciliacionIt
             ),
         )
 
+    # Un manifiesto solo puede estar asociado a un único ítem/viaje.
+    existing = (
+        db.query(ConciliacionItem.id)
+        .filter(
+            ConciliacionItem.manifiesto_numero == manifiesto,
+            ConciliacionItem.id != item.id,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El manifiesto {manifiesto} ya esta asociado a otro viaje "
+                f"(item #{existing.id}). Un manifiesto solo puede asociarse a un viaje."
+            ),
+        )
+
 
 def _validate_transport_items_manifests_or_raise(
     db: Session,
@@ -2092,7 +2110,9 @@ def patch_item(
                 item.tarifa_tercero = float(item.tarifa_cliente) * (1 - new_pct / 100)
 
     if {"manifiesto_numero", "placa"} & changed:
-        _validate_transport_item_manifest_or_raise(db, item)
+        # Solo validar si el manifiesto tiene valor (no está siendo eliminado)
+        if item.manifiesto_numero:
+            _validate_transport_item_manifest_or_raise(db, item)
 
     # Mantener viaje sincronizado con la corrección final de conciliación para evitar divergencias.
     if item.viaje_id is not None:
