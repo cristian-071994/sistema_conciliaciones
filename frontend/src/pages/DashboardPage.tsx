@@ -3015,7 +3015,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                             });
                                           }}
                                           placeholder="Ej. 0522318"
-                                          helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : "Obligatorio para facturar"}
+                                          helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : undefined}
                                           className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                                         />
                                       ) : (
@@ -3627,7 +3627,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                   });
                                 }}
                                 placeholder="Ej. 0522318"
-                                helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : "Obligatorio para facturar"}
+                                helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : undefined}
                                 className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                               />
                             ) : (
