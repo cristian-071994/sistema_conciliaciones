@@ -76,16 +76,6 @@ export interface Conciliacion {
   fecha_facturado?: string | null;
 }
 
-export interface ConciliacionManifiesto {
-  id: number;
-  conciliacion_id: number;
-  manifiesto_numero: string;
-  contexto: "CONCILIACION" | "LIQUIDACION_CONTRATO_FIJO";
-  liquidacion_contrato_fijo_id?: number | null;
-  created_by: number;
-  created_at: string;
-}
-
 export interface Item {
   id: number;
   conciliacion_id: number;

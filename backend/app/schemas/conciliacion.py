@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -144,29 +143,6 @@ class LiquidacionContratoFijoCreate(BaseModel):
     periodo_fin: date
     placas: list[str] = Field(min_length=1)
     valor_tercero: float = Field(gt=0)
-
-
-ConciliacionManifiestoContexto = Literal["CONCILIACION", "LIQUIDACION_CONTRATO_FIJO"]
-
-
-class ConciliacionManifiestoCreate(BaseModel):
-    manifiesto_numero: str
-    contexto: ConciliacionManifiestoContexto = "CONCILIACION"
-    liquidacion_contrato_fijo_id: int | None = Field(default=None, ge=1)
-
-
-class ConciliacionManifiestoUpdate(BaseModel):
-    manifiesto_numero: str
-
-
-class ConciliacionManifiestoOut(ORMModel):
-    id: int
-    conciliacion_id: int
-    manifiesto_numero: str
-    contexto: ConciliacionManifiestoContexto
-    liquidacion_contrato_fijo_id: int | None = None
-    created_by: int
-    created_at: datetime
 
 
 class ComentarioCreate(BaseModel):

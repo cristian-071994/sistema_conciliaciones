@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 import { ActionModal } from "../components/common/ActionModal";
 import excelLogo from "../assets/excel-logo.svg";
 import { api } from "../services/api";
-import { Conciliacion, ConciliacionManifiesto, Item, Operacion, Servicio, TarifaLookup, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
+import { Conciliacion, Item, Operacion, Servicio, TarifaLookup, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
 import { formatCOP } from "../utils/formatters";
 
 function formatMoney(value: number | null | undefined): string {
@@ -67,7 +67,7 @@ function parseFacturacionError(
     summary,
     viajesPendientes,
     viajeIds,
-    recomendacion: recommendationMatch?.[1]?.trim() || "Asocia los manifiestos de la conciliación y vuelve a intentar.",
+    recomendacion: recommendationMatch?.[1]?.trim() || "Completa los datos pendientes de los servicios y vuelve a intentar.",
   };
 }
 
@@ -183,11 +183,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [selectedConciliacion, setSelectedConciliacion] = useState<number | null>(null);
   const [pendingViajes, setPendingViajes] = useState<Viaje[]>([]);
   const [selectedViajeIds, setSelectedViajeIds] = useState<number[]>([]);
-  const [conciliacionManifiestos, setConciliacionManifiestos] = useState<ConciliacionManifiesto[]>([]);
-  const [conciliacionManifiestoInput, setConciliacionManifiestoInput] = useState("");
-  const [conciliacionManifiestoError, setConciliacionManifiestoError] = useState("");
-  const [savingManifiesto, setSavingManifiesto] = useState(false);
-  const [removingManifiestoId, setRemovingManifiestoId] = useState<number | null>(null);
   const [removingLiquidacionItemId, setRemovingLiquidacionItemId] = useState<number | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -212,6 +207,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     estado: "",
     activo: "",
     conciliacion: "",
+  });
+  const [filtrosTablaItemsConciliacion, setFiltrosTablaItemsConciliacion] = useState({
+    id: "",
+    tipo: "",
+    estado: "",
+    fecha: "",
+    origen: "",
+    destino: "",
+    placa: "",
+    manifiesto: "",
   });
   const [filtroEstadoConciliacion, setFiltroEstadoConciliacion] = useState<"TODOS" | "BORRADOR" | "EN_REVISION" | "APROBADA" | "ENVIADA_A_FACTURAR" | "FACTURADO">("TODOS");
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState("");
@@ -278,7 +283,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     } | null
   >(null);
   const selectedConciliacionRef = useRef<HTMLElement | null>(null);
-  const conciliacionManifiestoInputRef = useRef<HTMLInputElement | null>(null);
   const reviewRecipientDirtyRef = useRef(false);
   const suggestedReviewForConciliacionRef = useRef<number | null>(null);
 
@@ -590,14 +594,53 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     return tarifaCliente - tarifaTercero;
   }
 
-  const itemsConciliacion = useMemo(
-    () => items.filter((item) => !item.liquidacion_contrato_fijo),
+  const itemsViajeBajoLiquidacion = useMemo(
+    () =>
+      items.filter(
+        (item) => !item.liquidacion_contrato_fijo && String(item.servicio_codigo || "").trim().toUpperCase() === "VIAJE"
+      ),
     [items]
   );
+  const itemsConciliacion = useMemo(
+    () =>
+      items.filter(
+        (item) => !item.liquidacion_contrato_fijo && String(item.servicio_codigo || "").trim().toUpperCase() !== "VIAJE"
+      ),
+    [items]
+  );
+  const itemsConciliacionFiltrados = useMemo(() => {
+    const normalize = (value: string | number | null | undefined) =>
+      String(value ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .trim();
+
+    const includesFilter = (value: string | number | null | undefined, filterValue: string) => {
+      if (!filterValue.trim()) return true;
+      return normalize(value).includes(normalize(filterValue));
+    };
+
+    return itemsConciliacion.filter((item) => {
+      const tipoLabel = getItemServicioLabel(item);
+      const estadoLabel = item.estado.toUpperCase();
+      return (
+        includesFilter(item.viaje_id ?? item.id, filtrosTablaItemsConciliacion.id) &&
+        includesFilter(tipoLabel, filtrosTablaItemsConciliacion.tipo) &&
+        includesFilter(estadoLabel, filtrosTablaItemsConciliacion.estado) &&
+        includesFilter(item.fecha_servicio, filtrosTablaItemsConciliacion.fecha) &&
+        includesFilter(item.origen, filtrosTablaItemsConciliacion.origen) &&
+        includesFilter(item.destino, filtrosTablaItemsConciliacion.destino) &&
+        includesFilter(item.placa, filtrosTablaItemsConciliacion.placa) &&
+        includesFilter(item.manifiesto_numero, filtrosTablaItemsConciliacion.manifiesto)
+      );
+    });
+  }, [itemsConciliacion, filtrosTablaItemsConciliacion]);
   const itemsLiquidacion = useMemo(
     () => items.filter((item) => !!item.liquidacion_contrato_fijo),
     [items]
   );
+  const totalServiciosConciliacion = itemsConciliacion.length + itemsViajeBajoLiquidacion.length;
   const liquidacionResumen = useMemo(() => {
     const totals = itemsLiquidacion.reduce<{ tarifaTercero: number; tarifaCliente: number }>(
       (acc, item) => {
@@ -626,6 +669,17 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       { tarifaTercero: 0, tarifaCliente: 0, gananciaCointra: 0 }
     );
   }, [itemsConciliacion]);
+  const totalsViajesBajoLiquidacion = useMemo(() => {
+    return itemsViajeBajoLiquidacion.reduce<{ tarifaTercero: number; tarifaCliente: number; gananciaCointra: number }>(
+      (acc: { tarifaTercero: number; tarifaCliente: number; gananciaCointra: number }, item: Item) => {
+        acc.tarifaTercero += item.tarifa_tercero ?? 0;
+        acc.tarifaCliente += item.tarifa_cliente ?? 0;
+        acc.gananciaCointra += (item.tarifa_cliente ?? 0) - (item.tarifa_tercero ?? 0);
+        return acc;
+      },
+      { tarifaTercero: 0, tarifaCliente: 0, gananciaCointra: 0 }
+    );
+  }, [itemsViajeBajoLiquidacion]);
 
   const itemsClienteRevision = useMemo(
     () => items,
@@ -680,6 +734,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   function isHoraExtraItem(item: Item): boolean {
     return item.servicio_codigo === "HORA_EXTRA" || item.tipo === "HORA_EXTRA";
+  }
+
+  function isTransportServiceItem(item: Item): boolean {
+    const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+    return codigo === "VIAJE" || codigo === "VIAJE_ADICIONAL";
   }
 
   function getConciliacionEstadoLabel(conciliacion: Conciliacion): string {
@@ -771,10 +830,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     try {
       const itemData = await api.items(conciliacionId);
       setItems(itemData);
-      const manifestsConciliacion = await api.manifiestosConciliacion(conciliacionId, "CONCILIACION");
-      setConciliacionManifiestos(manifestsConciliacion);
-      setConciliacionManifiestoInput("");
-      setConciliacionManifiestoError("");
       if (user.rol === "CLIENTE") {
         const initialSelections: Record<number, boolean> = {};
         for (const item of itemData) {
@@ -802,9 +857,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return true;
     } catch (e) {
       setError(toSpanishError(e));
-      setConciliacionManifiestos([]);
-      setConciliacionManifiestoInput("");
-      setConciliacionManifiestoError("");
       return false;
     } finally {
       setLoadingItems(false);
@@ -1096,64 +1148,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     }
   }
 
-  async function asociarManifiestoConciliacion() {
-    if (!selected) return;
-    const rawInput = conciliacionManifiestoInput.trim();
-    if (!rawInput) return;
-
-    setError("");
-    setConciliacionManifiestoError("");
-    setSavingManifiesto(true);
-    try {
-      const tokens = Array.from(
-        new Set(
-          rawInput
-            .split(/[\s,;]+/)
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-        )
-      );
-      if (tokens.length === 0) {
-        setConciliacionManifiestoError("No se detectaron manifiestos válidos para asociar.");
-        conciliacionManifiestoInputRef.current?.focus();
-        return;
-      }
-
-      const failed: string[] = [];
-      let asociados = 0;
-      for (const raw of tokens) {
-        const normalized = raw.startsWith("0") ? raw : `0${raw}`;
-        try {
-          await api.asociarManifiestoConciliacion(selected.id, normalized, "CONCILIACION");
-          asociados += 1;
-        } catch (e) {
-          failed.push(`${normalized}: ${toSpanishError(e)}`);
-        }
-      }
-
-      const manifests = await api.manifiestosConciliacion(selected.id, "CONCILIACION");
-      setConciliacionManifiestos(manifests);
-      if (failed.length === 0) {
-        setConciliacionManifiestoInput("");
-        setConciliacionManifiestoError("");
-      } else {
-        const failedIds = failed.map((row) => row.split(":")[0]);
-        setConciliacionManifiestoInput(failedIds.join(" "));
-        setConciliacionManifiestoError(
-          `Se asociaron ${asociados} de ${tokens.length} manifiestos.\nNo se pudieron asociar:\n${failed.join("\n")}`
-        );
-        conciliacionManifiestoInputRef.current?.focus();
-      }
-      await onRefreshConciliaciones();
-    } catch (e) {
-      const detail = toSpanishError(e);
-      setConciliacionManifiestoError(detail);
-      conciliacionManifiestoInputRef.current?.focus();
-    } finally {
-      setSavingManifiesto(false);
-    }
-  }
-
   async function descargarConciliacionExcel() {
     if (!selected) return;
     setError("");
@@ -1172,22 +1166,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       setError(toSpanishError(e));
     } finally {
       setIsDownloadingExcel(false);
-    }
-  }
-
-  async function quitarManifiestoConciliacion(manifiestoId: number) {
-    if (!selected) return;
-    setError("");
-    setRemovingManifiestoId(manifiestoId);
-    try {
-      await api.quitarManifiestoConciliacion(selected.id, manifiestoId);
-      const manifests = await api.manifiestosConciliacion(selected.id, "CONCILIACION");
-      setConciliacionManifiestos(manifests);
-      await onRefreshConciliaciones();
-    } catch (e) {
-      setError(toSpanishError(e));
-    } finally {
-      setRemovingManifiestoId(null);
     }
   }
 
@@ -1444,6 +1422,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   async function patchItemAndSync(
     itemId: number,
     payload: {
+      placa?: string | null;
+      manifiesto_numero?: string | null;
       tarifa_tercero?: number | null;
       tarifa_cliente?: number | null;
       rentabilidad?: number | null;
@@ -2404,7 +2384,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Conciliación</p>
               <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-                {selected.nombre} ({itemsConciliacion.length} servicios)
+                {selected.nombre} ({totalServiciosConciliacion} servicios)
               </h2>
               <p className="mt-1 text-sm text-neutral">
                 #{selected.id} · {selected.fecha_inicio} a {selected.fecha_fin}
@@ -2815,6 +2795,108 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           </>
                         )}
                       </div>
+
+                      {itemsViajeBajoLiquidacion.length > 0 && (
+                        <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
+                          <div className="mb-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">Servicios VIAJE</p>
+                            <p className="text-[11px] text-indigo-800/80">
+                              Estos VIAJES corresponden a la contratacion fija.
+                            </p>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-indigo-100/70 text-indigo-900">
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">ID</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Fecha</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Origen</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Destino</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Placa</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Manifiesto</th>
+                                  <th className="border-b border-indigo-100 px-2 py-1 text-left">Estado</th>
+                                  {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
+                                    <th className="border-b border-indigo-100 px-2 py-1 text-left">Aprobación</th>
+                                  )}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {itemsViajeBajoLiquidacion.map((item) => (
+                                  <tr key={item.id} className="border-b border-indigo-50 last:border-0">
+                                    <td className="px-2 py-1">
+                                      {item.viaje_id ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => openViajeDetalle(item)}
+                                          className="font-semibold text-primary underline underline-offset-2 hover:text-primary/80"
+                                        >
+                                          {item.viaje_id}
+                                        </button>
+                                      ) : (
+                                        "-"
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1">{item.fecha_servicio || "-"}</td>
+                                    <td className="px-2 py-1">{item.origen || "-"}</td>
+                                    <td className="px-2 py-1">{item.destino || "-"}</td>
+                                    <td className="px-2 py-1">{item.placa || "-"}</td>
+                                    <td className="px-2 py-1">
+                                      {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
+                                        <EditableCell
+                                          initialValue={String(item.manifiesto_numero ?? "")}
+                                          onSave={async (val) => {
+                                            await patchItemAndSync(item.id, {
+                                              manifiesto_numero: val.trim() || null,
+                                            });
+                                          }}
+                                          placeholder="Ej. 0522318"
+                                          helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : "Obligatorio para facturar"}
+                                          className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                        />
+                                      ) : (
+                                        item.manifiesto_numero || "-"
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1">
+                                      <span
+                                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                          item.estado === "RECHAZADO"
+                                            ? "bg-red-100 text-red-700"
+                                            : item.estado === "APROBADO"
+                                              ? "bg-emerald-100 text-emerald-700"
+                                              : "bg-slate-100 text-slate-600"
+                                        }`}
+                                      >
+                                        {item.estado.toUpperCase()}
+                                      </span>
+                                    </td>
+                                    {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
+                                      <td className="px-2 py-1 text-center">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!clientItemSelections[item.id]}
+                                          onChange={(e) =>
+                                            setClientItemSelections((prev) => ({
+                                              ...prev,
+                                              [item.id]: e.target.checked,
+                                            }))
+                                          }
+                                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                                        />
+                                      </td>
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-semibold text-indigo-900">
+                            <span>Total tercero: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
+                            <span>Total cliente: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
+                            <span>Total ganancia Cointra: {formatMoney(totalsViajesBajoLiquidacion.gananciaCointra)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2846,14 +2928,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   <button
                     type="button"
                     onClick={() => setShowReviewPanel((prev) => !prev)}
-                    disabled={!selected.borrador_guardado || conciliacionManifiestos.length === 0}
+                    disabled={!selected.borrador_guardado}
                     className="inline-flex items-center rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
                     title={
                       !selected.borrador_guardado
                         ? "Debes guardar la conciliación antes"
-                        : conciliacionManifiestos.length === 0
-                          ? "Debes asociar manifiestos de conciliación para enviar a revisión"
-                          : "Enviar a revisión"
+                        : "Enviar a revisión"
                     }
                   >
                     Enviar a revisión
@@ -3010,9 +3090,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                               ))}
                             </div>
                             <p className="mt-2 text-sm">{facturacionErrorParsed.recomendacion}</p>
-                            <p className="mt-1 text-xs text-danger/80">
-                              Ya puedes asociar los manifiestos de la conciliación y volver a confirmar el envío.
-                            </p>
                           </>
                         ) : (
                           <p className="font-medium">{facturacionError}</p>
@@ -3117,6 +3194,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       <th className="border-b border-border px-3 py-2 text-left">Origen</th>
                       <th className="border-b border-border px-3 py-2 text-left">Destino</th>
                       <th className="border-b border-border px-3 py-2 text-left">Placa</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Manifiesto</th>
                       {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
                         <th className="border-b border-border px-3 py-2 text-left">
                           <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-slate-700">
@@ -3155,9 +3233,81 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <th className="border-b border-border px-3 py-2 text-left">Acciones</th>
                       )}
                     </tr>
+                    <tr className="bg-white text-xs text-slate-600">
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.id}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, id: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.tipo}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, tipo: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.estado}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, estado: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.fecha}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, fecha: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.origen}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, origen: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.destino}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, destino: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.placa}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, placa: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      <th className="border-b border-border px-3 py-1.5">
+                        <input
+                          value={filtrosTablaItemsConciliacion.manifiesto}
+                          onChange={(e) => setFiltrosTablaItemsConciliacion((prev) => ({ ...prev, manifiesto: e.target.value }))}
+                          placeholder="Filtrar"
+                          className="w-full rounded border border-border bg-white px-2 py-1 text-xs"
+                        />
+                      </th>
+                      {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && <th className="border-b border-border px-3 py-1.5" />}
+                      {user.rol !== "CLIENTE" && <th className="border-b border-border px-3 py-1.5" />}
+                      {user.rol !== "TERCERO" && <th className="border-b border-border px-3 py-1.5" />}
+                      {user.rol === "COINTRA" && <th className="border-b border-border px-3 py-1.5" />}
+                      {user.rol === "COINTRA" && <th className="border-b border-border px-3 py-1.5" />}
+                      {user.rol === "COINTRA" && selected.estado === "BORRADOR" && <th className="border-b border-border px-3 py-1.5" />}
+                    </tr>
                   </thead>
                   <tbody>
-                    {itemsConciliacion.map((item) => (
+                    {itemsConciliacionFiltrados.map((item) => (
                       <tr key={item.id} className="border-b border-border last:border-0">
                         <td className="px-3 py-2">
                           {item.viaje_id ? (
@@ -3207,6 +3357,27 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{item.origen || "-"}</td>
                         <td className="px-3 py-2">{item.destino || "-"}</td>
                         <td className="px-3 py-2">{item.placa || "-"}</td>
+                        <td className="px-3 py-2">
+                          {isTransportServiceItem(item) ? (
+                            user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
+                              <EditableCell
+                                initialValue={String(item.manifiesto_numero ?? "")}
+                                onSave={async (val) => {
+                                  await patchItemAndSync(item.id, {
+                                    manifiesto_numero: val.trim() || null,
+                                  });
+                                }}
+                                placeholder="Ej. 0522318"
+                                helperText={item.manifiesto_numero ? `Actual: ${item.manifiesto_numero}` : "Obligatorio para facturar"}
+                                className="w-32 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                              />
+                            ) : (
+                              item.manifiesto_numero || "-"
+                            )
+                          ) : (
+                            null
+                          )}
+                        </td>
                         {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
                           <td className="px-3 py-2 text-center">
                             <input
@@ -3379,70 +3550,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   </button>
                 </div>
               )}
-              <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Manifiestos asociados a la conciliación</p>
-                  <p className="text-xs text-neutral">
-                    {user.rol === "COINTRA" && selected.estado === "BORRADOR"
-                      ? "Este bloque cierra la conciliación. Los manifiestos deben ser distintos a los de liquidación."
-                      : "Estos manifiestos se usan para validar el cierre de la conciliación."}
-                  </p>
-                </div>
-
-                {conciliacionManifiestos.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {conciliacionManifiestos.map((row) => (
-                      <span
-                        key={row.id}
-                        className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-900 shadow-sm"
-                      >
-                        {row.manifiesto_numero}
-                        {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                          <button
-                            type="button"
-                            onClick={() => void quitarManifiestoConciliacion(row.id)}
-                            disabled={removingManifiestoId === row.id}
-                            className="rounded-full border border-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
-                          >
-                            Quitar
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-3 text-xs text-neutral">Sin manifiestos asociados a la conciliación.</p>
-                )}
-
-                {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
-                  <div className="mt-3 space-y-1">
-                    <div className="grid gap-2 md:grid-cols-[1fr,auto]">
-                      <input
-                        ref={conciliacionManifiestoInputRef}
-                        value={conciliacionManifiestoInput}
-                        onChange={(e) => {
-                          setConciliacionManifiestoInput(e.target.value);
-                          if (conciliacionManifiestoError) setConciliacionManifiestoError("");
-                        }}
-                        placeholder="Pega manifiestos separados por espacio (ej: 12345 67890 54321)"
-                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void asociarManifiestoConciliacion()}
-                        disabled={!conciliacionManifiestoInput.trim() || savingManifiesto}
-                        className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        Asociar
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-neutral">El sistema agrega automáticamente un cero al inicio de cada manifiesto.</p>
-                    {conciliacionManifiestoError && (
-                      <p className="whitespace-pre-line text-xs font-medium text-danger">{conciliacionManifiestoError}</p>
-                    )}
-                  </div>
-                )}
-              </div>
             </>
           )}
         </section>

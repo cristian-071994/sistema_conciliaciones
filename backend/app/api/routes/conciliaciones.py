@@ -3,7 +3,7 @@ from io import BytesIO
 import json
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -16,12 +16,10 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.comentario import Comentario
 from app.models.conciliacion import Conciliacion
-from app.models.conciliacion_manifiesto import ConciliacionManifiesto
 from app.models.conciliacion_item import ConciliacionItem
 from app.models.enums import ItemEstado, ItemTipo, UserRole
 from app.models.historial_cambio import HistorialCambio
 from app.models.operacion import Operacion
-from app.models.manifiesto_avansat import ManifiestoAvansat
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
 from app.models.vehiculo import Vehiculo
@@ -38,8 +36,6 @@ from app.schemas.conciliacion import (
     ConciliacionItemPatch,
     ConciliacionItemUpdateEstado,
     LiquidacionContratoFijoCreate,
-    ConciliacionManifiestoCreate,
-    ConciliacionManifiestoOut,
     ConciliacionOut,
     ConciliacionWorkflowAction,
     ConciliacionUpdateEstado,
@@ -53,12 +49,7 @@ from app.schemas.viaje import AdjuntarViajesRequest, ViajeOut
 
 router = APIRouter(prefix="/conciliaciones", tags=["conciliaciones"])
 
-MANIFIESTO_CONTEXTO_CONCILIACION = "CONCILIACION"
-MANIFIESTO_CONTEXTO_LIQUIDACION = "LIQUIDACION_CONTRATO_FIJO"
-MANIFIESTO_CONTEXTOS_VALIDOS = {
-    MANIFIESTO_CONTEXTO_CONCILIACION,
-    MANIFIESTO_CONTEXTO_LIQUIDACION,
-}
+TRANSPORTE_SERVICE_CODES = {"VIAJE", "VIAJE_ADICIONAL"}
 
 
 def _login_url() -> str:
@@ -267,22 +258,6 @@ def _display_estado(conc: Conciliacion) -> str:
     if estado == "APROBADA" and conc.enviada_facturacion:
         return "ENVIADA_A_FACTURAR"
     return estado
-
-
-def _normalize_manifiesto_contexto(raw_contexto: str | None) -> str:
-    contexto = str(raw_contexto or MANIFIESTO_CONTEXTO_CONCILIACION).strip().upper()
-    if contexto not in MANIFIESTO_CONTEXTOS_VALIDOS:
-        raise HTTPException(
-            status_code=400,
-            detail="Contexto de manifiesto invalido. Usa CONCILIACION",
-        )
-    return contexto
-
-
-def _contexto_label(contexto: str) -> str:
-    if contexto == MANIFIESTO_CONTEXTO_LIQUIDACION:
-        return "liquidacion contrato fijo"
-    return "conciliacion"
 
 
 def _mark_borrador_dirty(conc: Conciliacion) -> None:
@@ -550,25 +525,48 @@ def _normalize_placa_for_compare(value: object) -> str:
     return "".join(ch for ch in raw if ch.isalnum())
 
 
-def _validate_manifiesto_placa_match_or_raise(
-    db: Session,
-    conciliacion_id: int,
-    contexto: str,
-    manifiesto_numero: str,
-    liquidacion_contrato_fijo_id: int | None = None,
-) -> None:
-    manifiesto = _normalize_manifiesto_for_lookup(manifiesto_numero)
+def _item_servicio_codigo(item: ConciliacionItem) -> str:
+    viaje = getattr(item, "viaje", None)
+    servicio = getattr(viaje, "servicio", None)
+    raw_codigo = getattr(servicio, "codigo", "")
+    return str(raw_codigo or "").strip().upper()
+
+
+def _is_transport_item(item: ConciliacionItem) -> bool:
+    codigo = _item_servicio_codigo(item)
+    return codigo in TRANSPORTE_SERVICE_CODES
+
+
+def _validate_transport_item_manifest_or_raise(db: Session, item: ConciliacionItem) -> None:
+    if not _is_transport_item(item):
+        return
+
+    manifiesto = _normalize_manifiesto_for_lookup(item.manifiesto_numero)
     if not manifiesto:
-        raise HTTPException(status_code=400, detail="Debes escribir un manifiesto valido")
+        servicio_codigo = _item_servicio_codigo(item) or "VIAJE"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El servicio {servicio_codigo} requiere manifiesto. "
+                "Asocia un manifiesto antes de continuar."
+            ),
+        )
 
     avansat = _fetch_avansat_with_fallback(db, manifiesto)
     if not avansat:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"El manifiesto {manifiesto} no existe en la tabla manifiestos_avansat. "
-                "Sincroniza Avansat o corrige el numero antes de asociarlo."
+                f"El manifiesto {manifiesto} no existe en la cache de Avansat. "
+                "Sincroniza Avansat o corrige el numero del manifiesto."
             ),
+        )
+
+    placa_servicio = _normalize_placa_for_compare(item.placa)
+    if not placa_servicio:
+        raise HTTPException(
+            status_code=400,
+            detail="El servicio de transporte no tiene placa registrada para validar el manifiesto.",
         )
 
     placa_avansat = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
@@ -576,75 +574,46 @@ def _validate_manifiesto_placa_match_or_raise(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"El manifiesto {manifiesto} no tiene placa valida en manifiestos_avansat. "
-                "Corrige el manifiesto antes de asociarlo."
+                f"El manifiesto {manifiesto} no tiene placa valida en Avansat. "
+                "Corrige el manifiesto o sincroniza la fuente."
             ),
         )
 
-    items = (
-        db.query(ConciliacionItem)
-        .filter(ConciliacionItem.conciliacion_id == conciliacion_id)
-        .all()
-    )
-
-    placas_contexto: set[str] = set()
-    for item in items:
-        placa_item = _normalize_placa_for_compare(item.placa)
-        if not placa_item:
-            continue
-
-        liq_meta = _extract_liquidacion_metadata(item)
-        if contexto == MANIFIESTO_CONTEXTO_LIQUIDACION:
-            if not liq_meta:
-                continue
-            if (
-                liquidacion_contrato_fijo_id is not None
-                and liq_meta.get("liquidacion_contrato_fijo_id") != liquidacion_contrato_fijo_id
-            ):
-                continue
-            placas_contexto.add(placa_item)
-        else:
-            if liq_meta:
-                continue
-            placas_contexto.add(placa_item)
-
-    if placa_avansat not in placas_contexto:
+    if placa_avansat != placa_servicio:
         raise HTTPException(
             status_code=400,
             detail=(
-                "La placa del manifiesto no corresponde a ninguna placa de los servicios relacionados"
+                f"La placa del manifiesto {manifiesto} ({placa_avansat}) no coincide con la placa del servicio ({placa_servicio})."
             ),
         )
 
 
-def _is_liquidacion_manifest_mismatch(
+def _validate_transport_items_manifests_or_raise(
     db: Session,
-    conciliacion_id: int,
-    manifiesto_numero: str,
-) -> bool:
-    manifiesto = _normalize_manifiesto_for_lookup(manifiesto_numero)
-    if not manifiesto:
-        return True
+    items: list[ConciliacionItem],
+    action_label: str,
+) -> None:
+    errors: list[str] = []
+    for item in items:
+        if not _is_transport_item(item):
+            continue
+        try:
+            _validate_transport_item_manifest_or_raise(db, item)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Error de validacion"
+            item_ref = f"viaje #{item.viaje_id}" if item.viaje_id else f"item #{item.id}"
+            errors.append(f"{item_ref}: {detail}")
 
-    items = (
-        db.query(ConciliacionItem)
-        .filter(ConciliacionItem.conciliacion_id == conciliacion_id)
-        .all()
-    )
-    placas_liquidacion = {
-        _normalize_placa_for_compare(item.placa)
-        for item in items
-        if _extract_liquidacion_metadata(item) and _normalize_placa_for_compare(item.placa)
-    }
-    if not placas_liquidacion:
-        return True
-
-    avansat = _fetch_avansat_with_fallback(db, manifiesto)
-    placa_avansat = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
-    if not placa_avansat:
-        return True
-
-    return placa_avansat not in placas_liquidacion
+    if errors:
+        preview = "\n".join(errors[:10])
+        suffix = "" if len(errors) <= 10 else f"\n... y {len(errors) - 10} errores mas"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No se puede {action_label}. Los servicios de transporte (VIAJE/VIAJE_ADICIONAL) deben tener manifiesto valido y placa coincidente.\n"
+                f"{preview}{suffix}"
+            ),
+        )
 
 
 def _fetch_avansat_with_fallback(
@@ -672,16 +641,19 @@ def _fetch_avansat_with_fallback(
     return {}
 
 
-def _prefetch_avansat_for_excel_or_raise(
+def _prefetch_avansat_for_manifest_numbers_or_raise(
     db: Session,
-    manifests: list[ConciliacionManifiesto],
+    manifest_numbers: list[str],
 ) -> dict[str, dict]:
-    normalized_manifiestos = [
-        _normalize_manifiesto_for_lookup(row.manifiesto_numero)
-        for row in manifests
-        if _normalize_manifiesto_for_lookup(row.manifiesto_numero)
-    ]
-    unique_manifiestos = list(dict.fromkeys(normalized_manifiestos))
+    unique_manifiestos = list(
+        dict.fromkeys(
+            [
+                _normalize_manifiesto_for_lookup(number)
+                for number in manifest_numbers
+                if _normalize_manifiesto_for_lookup(number)
+            ]
+        )
+    )
     if not unique_manifiestos:
         return {}
 
@@ -703,139 +675,6 @@ def _prefetch_avansat_for_excel_or_raise(
         )
 
     return prefetched
-
-
-def _validate_manifests_match_plates_or_raise(
-    items: list[ConciliacionItem],
-    manifests: list[ConciliacionManifiesto],
-    avansat_prefetched: dict[str, dict],
-    contexto: str,
-) -> None:
-    placas_contexto = {
-        _normalize_placa_for_compare(item.placa)
-        for item in items
-        if (
-            (
-                contexto == MANIFIESTO_CONTEXTO_LIQUIDACION
-                and _extract_liquidacion_metadata(item)
-            )
-            or (
-                contexto == MANIFIESTO_CONTEXTO_CONCILIACION
-                and not _extract_liquidacion_metadata(item)
-            )
-        )
-        and _normalize_placa_for_compare(item.placa)
-    }
-
-    manifests_invalidos: list[dict[str, str | int]] = []
-    for manifest_row in manifests:
-        manifiesto = _normalize_manifiesto_for_lookup(manifest_row.manifiesto_numero)
-        if not manifiesto:
-            continue
-        avansat = avansat_prefetched.get(manifiesto) or {}
-        placa_avansat = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
-        if not placa_avansat or placa_avansat not in placas_contexto:
-            manifests_invalidos.append(
-                {
-                    "id": manifest_row.id,
-                    "manifiesto_numero": manifiesto,
-                    "placa_avansat": str(avansat.get("placa_vehiculo") or ""),
-                }
-            )
-
-    if manifests_invalidos:
-        invalid_numbers = [str(row.get("manifiesto_numero") or "") for row in manifests_invalidos]
-        invalid_list = ", ".join(invalid_numbers[:10])
-        suffix = "" if len(manifests_invalidos) <= 10 else f" y {len(manifests_invalidos) - 10} mas"
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": (
-                    "Los siguientes manifiestos no corresponden a ningun vehiculo de la "
-                    f"{_contexto_label(contexto)}: "
-                    f"{invalid_list}{suffix}."
-                ),
-                "invalid_manifiestos": manifests_invalidos,
-            },
-        )
-
-
-def _required_placas_by_context(items: list[ConciliacionItem], contexto: str) -> set[str]:
-    return {
-        _normalize_placa_for_compare(item.placa)
-        for item in items
-        if (
-            (
-                contexto == MANIFIESTO_CONTEXTO_LIQUIDACION
-                and _extract_liquidacion_metadata(item)
-            )
-            or (
-                contexto == MANIFIESTO_CONTEXTO_CONCILIACION
-                and not _extract_liquidacion_metadata(item)
-            )
-        )
-        and _normalize_placa_for_compare(item.placa)
-    }
-
-
-def _associated_placas_by_context(
-    db: Session,
-    manifests: list[ConciliacionManifiesto],
-) -> set[str]:
-    if not manifests:
-        return set()
-
-    manifest_numbers = [
-        _normalize_manifiesto_for_lookup(row.manifiesto_numero)
-        for row in manifests
-        if _normalize_manifiesto_for_lookup(row.manifiesto_numero)
-    ]
-    if not manifest_numbers:
-        return set()
-
-    avansat_map, _ = resolve_avansat_from_cache_only(db, manifest_numbers)
-    placas: set[str] = set()
-    for number in manifest_numbers:
-        avansat = avansat_map.get(number) or {}
-        placa = _normalize_placa_for_compare(avansat.get("placa_vehiculo") or "")
-        if placa:
-            placas.add(placa)
-    return placas
-
-
-def _ensure_required_manifests_for_review_or_raise(db: Session, conciliacion_id: int) -> None:
-    items = (
-        db.query(ConciliacionItem)
-        .filter(ConciliacionItem.conciliacion_id == conciliacion_id)
-        .all()
-    )
-    manifests = (
-        db.query(ConciliacionManifiesto)
-        .filter(ConciliacionManifiesto.conciliacion_id == conciliacion_id)
-        .all()
-    )
-
-    manifests_conciliacion = [
-        row for row in manifests if row.contexto == MANIFIESTO_CONTEXTO_CONCILIACION
-    ]
-    required_conciliacion = _required_placas_by_context(items, MANIFIESTO_CONTEXTO_CONCILIACION)
-    associated_conciliacion = _associated_placas_by_context(db, manifests_conciliacion)
-
-    missing_conciliacion = sorted(required_conciliacion - associated_conciliacion)
-    if not missing_conciliacion:
-        return
-
-    detail_lines: list[str] = []
-    if missing_conciliacion:
-        detail_lines.append(
-            "En la conciliacion te falta asociar manifiestos para los servicios de los vehiculos "
-            f"{', '.join(missing_conciliacion)}"
-        )
-
-    raise HTTPException(
-        status_code=400,
-        detail="\n".join(detail_lines),
-    )
 
 
 def _prepare_facturacion_rows(
@@ -1003,7 +842,6 @@ def _build_facturacion_excel(conc: Conciliacion, rows: list[dict]) -> bytes:
 def _build_conciliacion_excel(
     conc: Conciliacion,
     items: list[ConciliacionItem],
-    manifests: list[ConciliacionManifiesto],
     user_role: UserRole,
     tipo_vehiculo_by_placa: dict[str, str],
     avansat_prefetched: dict[str, dict] | None = None,
@@ -1355,14 +1193,11 @@ def _build_conciliacion_excel(
             cell.border = border
 
     servicios_entries: list[dict[str, object]] = []
-    manifests_sorted = sorted(
-        manifests,
-        key=lambda row: (str(row.manifiesto_numero or ""), row.id),
-    )
+    manifests_sorted = sorted(manifest_financials_servicios.keys())
     avansat_servicios_prefetched = avansat_prefetched or {}
 
-    for manifest_row in manifests_sorted:
-        manifiesto = _normalize_manifiesto_for_lookup(manifest_row.manifiesto_numero)
+    for manifest_key in manifests_sorted:
+        manifiesto = _normalize_manifiesto_for_lookup(manifest_key)
         avansat = avansat_servicios_prefetched.get(manifiesto) or {}
         remesas = avansat.get("remesas") if isinstance(avansat.get("remesas"), list) else []
         remesas_rows = [r for r in remesas if isinstance(r, dict)]
@@ -2071,158 +1906,6 @@ def create_liquidacion_contrato_fijo(
     return result
 
 
-@router.get("/{conciliacion_id}/manifiestos", response_model=list[ConciliacionManifiestoOut])
-def list_manifiestos(
-    conciliacion_id: int,
-    contexto: str = Query(default=MANIFIESTO_CONTEXTO_CONCILIACION),
-    liquidacion_contrato_fijo_id: int | None = Query(default=None),
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
-):
-    conc = db.get(Conciliacion, conciliacion_id)
-    if not conc:
-        raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
-
-    operacion = db.get(Operacion, conc.operacion_id)
-    _validate_user_access_operacion(user, operacion)
-    _ensure_user_can_access_conciliacion(user, conc)
-    contexto_norm = _normalize_manifiesto_contexto(contexto)
-
-    query = (
-        db.query(ConciliacionManifiesto)
-        .filter(
-            ConciliacionManifiesto.conciliacion_id == conciliacion_id,
-            ConciliacionManifiesto.contexto == contexto_norm,
-        )
-    )
-    if contexto_norm == MANIFIESTO_CONTEXTO_LIQUIDACION and liquidacion_contrato_fijo_id is not None:
-        query = query.filter(ConciliacionManifiesto.liquidacion_contrato_fijo_id == liquidacion_contrato_fijo_id)
-
-    return query.order_by(ConciliacionManifiesto.id.asc()).all()
-
-
-@router.post("/{conciliacion_id}/manifiestos", response_model=ConciliacionManifiestoOut)
-def create_manifiesto(
-    conciliacion_id: int,
-    payload: ConciliacionManifiestoCreate,
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
-):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede asociar manifiestos")
-
-    conc = db.get(Conciliacion, conciliacion_id)
-    if not conc:
-        raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
-
-    operacion = db.get(Operacion, conc.operacion_id)
-    _validate_user_access_operacion(user, operacion)
-
-    if conc.estado != "BORRADOR":
-        raise HTTPException(status_code=400, detail="Solo conciliaciones en BORRADOR permiten asociar manifiestos")
-
-    manifiesto_numero = payload.manifiesto_numero.strip()
-    if not manifiesto_numero:
-        raise HTTPException(status_code=400, detail="Debes escribir un manifiesto valido")
-
-    contexto = _normalize_manifiesto_contexto(payload.contexto)
-    liquidacion_contrato_fijo_id = payload.liquidacion_contrato_fijo_id
-
-    if contexto == MANIFIESTO_CONTEXTO_LIQUIDACION:
-        raise HTTPException(
-            status_code=400,
-            detail="La asociación de manifiestos para liquidación contrato fijo está deshabilitada",
-        )
-    else:
-        liquidacion_contrato_fijo_id = None
-
-    _validate_manifiesto_placa_match_or_raise(
-        db,
-        conc.id,
-        contexto,
-        manifiesto_numero,
-        liquidacion_contrato_fijo_id,
-    )
-
-    exists = (
-        db.query(ConciliacionManifiesto)
-        .filter(ConciliacionManifiesto.manifiesto_numero == manifiesto_numero)
-        .first()
-    )
-    if exists:
-        if exists.conciliacion_id != conciliacion_id:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"El manifiesto {manifiesto_numero} ya fue liquidado en la conciliacion #{exists.conciliacion_id}"
-                ),
-            )
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"El manifiesto {manifiesto_numero} ya esta asociado en esta conciliacion "
-                f"({_contexto_label(exists.contexto)})."
-            ),
-        )
-
-    row = ConciliacionManifiesto(
-        conciliacion_id=conciliacion_id,
-        manifiesto_numero=manifiesto_numero,
-        contexto=contexto,
-        liquidacion_contrato_fijo_id=liquidacion_contrato_fijo_id,
-        created_by=user.id,
-    )
-    db.add(row)
-    _mark_borrador_dirty(conc)
-    log_change(
-        db,
-        usuario_id=user.id,
-        conciliacion_id=conciliacion_id,
-        campo=f"manifiesto_asociado_{contexto.lower()}",
-        valor_nuevo=manifiesto_numero,
-    )
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@router.delete("/{conciliacion_id}/manifiestos/{manifiesto_id}")
-def delete_manifiesto(
-    conciliacion_id: int,
-    manifiesto_id: int,
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
-):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede quitar manifiestos")
-
-    conc = db.get(Conciliacion, conciliacion_id)
-    if not conc:
-        raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
-
-    operacion = db.get(Operacion, conc.operacion_id)
-    _validate_user_access_operacion(user, operacion)
-
-    if conc.estado != "BORRADOR":
-        raise HTTPException(status_code=400, detail="Solo conciliaciones en BORRADOR permiten quitar manifiestos")
-
-    row = db.get(ConciliacionManifiesto, manifiesto_id)
-    if not row or row.conciliacion_id != conciliacion_id:
-        raise HTTPException(status_code=404, detail="Manifiesto no encontrado en esta conciliacion")
-
-    log_change(
-        db,
-        usuario_id=user.id,
-        conciliacion_id=conciliacion_id,
-        campo=f"manifiesto_quitado_{row.contexto.lower()}",
-        valor_anterior=row.manifiesto_numero,
-    )
-    _mark_borrador_dirty(conc)
-    db.delete(row)
-    db.commit()
-    return {"ok": True}
-
-
 @router.delete("/items/{item_id}")
 def delete_liquidacion_item(
     item_id: int,
@@ -2327,8 +2010,11 @@ def patch_item(
 
     changed = payload.model_fields_set
     if can_fix_manifiesto_aprobada:
-        if item.tipo != ItemTipo.VIAJE:
-            raise HTTPException(status_code=400, detail="Solo viajes permiten ajustar manifiesto en estado APROBADA")
+        if not _is_transport_item(item):
+            raise HTTPException(
+                status_code=400,
+                detail="Solo servicios de transporte (VIAJE/VIAJE_ADICIONAL) permiten ajustar manifiesto en estado APROBADA",
+            )
         if not changed or not changed.issubset({"manifiesto_numero"}):
             raise HTTPException(
                 status_code=400,
@@ -2403,6 +2089,9 @@ def patch_item(
             item.rentabilidad = new_pct
             if item.tarifa_cliente is not None and new_pct < 100:
                 item.tarifa_tercero = float(item.tarifa_cliente) * (1 - new_pct / 100)
+
+    if {"manifiesto_numero", "placa"} & changed:
+        _validate_transport_item_manifest_or_raise(db, item)
 
     # Mantener viaje sincronizado con la corrección final de conciliación para evitar divergencias.
     if item.viaje_id is not None:
@@ -2526,7 +2215,14 @@ def enviar_revision(
             detail="Debes guardar la conciliacion antes de enviarla a revision",
         )
 
-    _ensure_required_manifests_for_review_or_raise(db, conc.id)
+    items = (
+        db.query(ConciliacionItem)
+        .options(selectinload(ConciliacionItem.viaje).selectinload(Viaje.servicio))
+        .filter(ConciliacionItem.conciliacion_id == conciliacion_id)
+        .order_by(ConciliacionItem.id.asc())
+        .all()
+    )
+    _validate_transport_items_manifests_or_raise(db, items, "enviar a revision")
 
     conc.estado = "EN_REVISION"
     conc.enviada_facturacion = False
@@ -2788,22 +2484,11 @@ def enviar_facturacion_conciliacion(
     if not target_emails:
         raise HTTPException(status_code=400, detail="No hay correos de destino para facturacion")
 
-    manifests = (
-        db.query(ConciliacionManifiesto)
-        .filter(
-            ConciliacionManifiesto.conciliacion_id == conciliacion_id,
-            ConciliacionManifiesto.contexto == MANIFIESTO_CONTEXTO_CONCILIACION,
-        )
-        .order_by(ConciliacionManifiesto.id.asc())
-        .all()
-    )
-    liquidacion_manifests: list[ConciliacionManifiesto] = []
-    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests)
-    _validate_manifests_match_plates_or_raise(
-        items,
-        manifests,
-        avansat_prefetched,
-        MANIFIESTO_CONTEXTO_CONCILIACION,
+    _validate_transport_items_manifests_or_raise(db, items, "enviar a facturacion")
+
+    avansat_prefetched = _prefetch_avansat_for_manifest_numbers_or_raise(
+        db,
+        [str(item.manifiesto_numero or "") for item in items],
     )
 
     placas = {str(item.placa or "").strip().upper() for item in items if item.placa}
@@ -2823,7 +2508,6 @@ def enviar_facturacion_conciliacion(
     excel_content = _build_conciliacion_excel(
         conc,
         items,
-        manifests,
         user.rol,
         tipo_vehiculo_by_placa,
         avansat_prefetched,
@@ -3005,22 +2689,9 @@ def descargar_conciliacion_excel(
         .order_by(ConciliacionItem.id.asc())
         .all()
     )
-    manifests = (
-        db.query(ConciliacionManifiesto)
-        .filter(
-            ConciliacionManifiesto.conciliacion_id == conciliacion_id,
-            ConciliacionManifiesto.contexto == MANIFIESTO_CONTEXTO_CONCILIACION,
-        )
-        .order_by(ConciliacionManifiesto.id.asc())
-        .all()
-    )
-    liquidacion_manifests: list[ConciliacionManifiesto] = []
-    avansat_prefetched = _prefetch_avansat_for_excel_or_raise(db, manifests)
-    _validate_manifests_match_plates_or_raise(
-        items,
-        manifests,
-        avansat_prefetched,
-        MANIFIESTO_CONTEXTO_CONCILIACION,
+    avansat_prefetched = _prefetch_avansat_for_manifest_numbers_or_raise(
+        db,
+        [str(item.manifiesto_numero or "") for item in items],
     )
 
     placas = {str(item.placa or "").strip().upper() for item in items if item.placa}
@@ -3040,7 +2711,6 @@ def descargar_conciliacion_excel(
     excel_content = _build_conciliacion_excel(
         conc,
         items,
-        manifests,
         user.rol,
         tipo_vehiculo_by_placa,
         avansat_prefetched,

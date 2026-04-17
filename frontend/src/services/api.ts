@@ -1,4 +1,4 @@
-import { AuthMessage, AvansatCacheListResult, AvansatLookup, AvansatSyncResult, CatalogoTarifa, Cliente, Conciliacion, ConciliacionManifiesto, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Servicio, TarifaLookup, Tercero, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatLookup, AvansatSyncResult, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Servicio, TarifaLookup, Tercero, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -280,29 +280,6 @@ export const api = {
     }),
   eliminarRegistroLiquidacionContratoFijo: (itemId: number) =>
     request<{ ok: boolean }>(`/conciliaciones/items/${itemId}`, {
-      method: "DELETE",
-    }),
-  manifiestosConciliacion: (
-    conciliacionId: number,
-    contexto: "CONCILIACION" | "LIQUIDACION_CONTRATO_FIJO" = "CONCILIACION",
-    liquidacionContratoFijoId?: number
-  ) =>
-    request<ConciliacionManifiesto[]>(`/conciliaciones/${conciliacionId}/manifiestos?${new URLSearchParams({
-      contexto,
-      ...(liquidacionContratoFijoId ? { liquidacion_contrato_fijo_id: String(liquidacionContratoFijoId) } : {}),
-    }).toString()}`),
-  asociarManifiestoConciliacion: (
-    conciliacionId: number,
-    manifiesto_numero: string,
-    contexto: "CONCILIACION" | "LIQUIDACION_CONTRATO_FIJO" = "CONCILIACION",
-    liquidacion_contrato_fijo_id?: number
-  ) =>
-    request<ConciliacionManifiesto>(`/conciliaciones/${conciliacionId}/manifiestos`, {
-      method: "POST",
-      body: JSON.stringify({ manifiesto_numero, contexto, liquidacion_contrato_fijo_id }),
-    }),
-  quitarManifiestoConciliacion: (conciliacionId: number, manifiestoId: number) =>
-    request<{ ok: boolean }>(`/conciliaciones/${conciliacionId}/manifiestos/${manifiestoId}`, {
       method: "DELETE",
     }),
   enviarRevisionConciliacion: (
