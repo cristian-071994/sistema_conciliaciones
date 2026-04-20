@@ -131,8 +131,6 @@ class ConciliacionItemOut(ORMModel):
     liquidacion_contrato_fijo_id: int | None = None
     liquidacion_periodo_inicio: date | None = None
     liquidacion_periodo_fin: date | None = None
-    liquidacion_es_relevo: bool = False
-    liquidacion_relevo_con_valor: bool | None = None
     created_by: int
     created_at: datetime
 

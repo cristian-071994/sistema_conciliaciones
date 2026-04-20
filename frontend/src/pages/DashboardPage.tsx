@@ -224,6 +224,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [filtroConciliacionCreadaHasta, setFiltroConciliacionCreadaHasta] = useState("");
   const [filtroEstadoViaje, setFiltroEstadoViaje] = useState<"TODOS" | "PENDIENTE" | "EN_REVISION" | "CONCILIADO">("TODOS");
   const [serviciosPage, setServiciosPage] = useState(1);
+  const [conciliacionesPage, setConciliacionesPage] = useState(1);
   const [filtrosTablaViajes, setFiltrosTablaViajes] = useState({
     titulo: "",
     servicio: "",
@@ -442,6 +443,26 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     filtroConciliacionCreadaHasta,
   ]);
 
+  const CONCILIACIONES_PAGE_SIZE = 10;
+  const totalConciliacionesPages = Math.max(1, Math.ceil(conciliacionesFiltradas.length / CONCILIACIONES_PAGE_SIZE));
+  const conciliacionesPageSafe = Math.min(conciliacionesPage, totalConciliacionesPages);
+  const conciliacionesPaginadas = useMemo(() => {
+    const start = (conciliacionesPageSafe - 1) * CONCILIACIONES_PAGE_SIZE;
+    return conciliacionesFiltradas.slice(start, start + CONCILIACIONES_PAGE_SIZE);
+  }, [conciliacionesFiltradas, conciliacionesPageSafe]);
+  const visibleConciliacionesPages = useMemo(() => {
+    const maxVisible = 7;
+    if (totalConciliacionesPages <= maxVisible) {
+      return Array.from({ length: totalConciliacionesPages }, (_, idx) => idx + 1);
+    }
+    let start = Math.max(1, conciliacionesPageSafe - 3);
+    let end = Math.min(totalConciliacionesPages, start + maxVisible - 1);
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+    return Array.from({ length: end - start + 1 }, (_, idx) => start + idx);
+  }, [conciliacionesPageSafe, totalConciliacionesPages]);
+
   const viajesFiltrados = useMemo(() => {
     const normalize = (value: string | number | null | undefined) =>
       String(value ?? "")
@@ -560,6 +581,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   }, [filtroEstadoViaje, filtrosTablaViajes]);
 
   useEffect(() => {
+    setConciliacionesPage(1);
+  }, [filtroEstadoConciliacion, filtroConciliacionId, filtroConciliacionNombre, filtroOperacionId, filtroConciliacionCreadaDesde, filtroConciliacionCreadaHasta]);
+
+  useEffect(() => {
     if (serviciosPage > totalServiciosPages) {
       setServiciosPage(totalServiciosPages);
     }
@@ -640,19 +665,44 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     return tarifaCliente - tarifaTercero;
   }
 
+  const itemsLiquidacion = useMemo(
+    () => items.filter((item) => !!item.liquidacion_contrato_fijo),
+    [items]
+  );
+  const liquidacionPlacas = useMemo(() => {
+    const placas = new Set<string>();
+    for (const item of itemsLiquidacion) {
+      if (item.placa) placas.add(String(item.placa).trim().toUpperCase());
+    }
+    return placas;
+  }, [itemsLiquidacion]);
   const itemsViajeBajoLiquidacion = useMemo(
     () =>
-      items.filter(
-        (item) => !item.liquidacion_contrato_fijo && String(item.servicio_codigo || "").trim().toUpperCase() === "VIAJE"
-      ),
-    [items]
+      items.filter((item) => {
+        if (item.liquidacion_contrato_fijo) return false;
+        const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+        if (codigo !== "VIAJE") return false;
+        if (itemsLiquidacion.length > 0) {
+          const itemPlaca = String(item.placa || "").trim().toUpperCase();
+          return liquidacionPlacas.has(itemPlaca);
+        }
+        return true;
+      }),
+    [items, itemsLiquidacion, liquidacionPlacas]
   );
   const itemsConciliacion = useMemo(
     () =>
-      items.filter(
-        (item) => !item.liquidacion_contrato_fijo && String(item.servicio_codigo || "").trim().toUpperCase() !== "VIAJE"
-      ),
-    [items]
+      items.filter((item) => {
+        if (item.liquidacion_contrato_fijo) return false;
+        const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+        if (codigo !== "VIAJE") return true;
+        if (itemsLiquidacion.length > 0) {
+          const itemPlaca = String(item.placa || "").trim().toUpperCase();
+          return !liquidacionPlacas.has(itemPlaca);
+        }
+        return false;
+      }),
+    [items, itemsLiquidacion, liquidacionPlacas]
   );
   const itemsConciliacionFiltrados = useMemo(() => {
     const normalize = (value: string | number | null | undefined) =>
@@ -712,10 +762,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     });
     return sortByFechaAsc(filtered);
   }, [itemsViajeBajoLiquidacion, filtrosTablaItemsViajeBajoLiquidacion]);
-  const itemsLiquidacion = useMemo(
-    () => items.filter((item) => !!item.liquidacion_contrato_fijo),
-    [items]
-  );
   const totalServiciosConciliacion = itemsConciliacion.length + itemsViajeBajoLiquidacion.length;
   const liquidacionResumen = useMemo(() => {
     const totals = itemsLiquidacion.reduce<{ tarifaTercero: number; tarifaCliente: number }>(
@@ -792,7 +838,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   function getItemServicioLabel(item: Item): string {
     if (item.liquidacion_contrato_fijo) {
-      if (item.liquidacion_es_relevo) return "CONDUCTOR RELEVO (CONTRATO FIJO)";
       return "LIQUIDACIÓN CONTRATO FIJO";
     }
     if (item.servicio_nombre?.trim()) return item.servicio_nombre;
@@ -843,7 +888,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     const ganancia = valorCliente - valorTercero;
     if (user.rol === "CLIENTE") return formatCOP(valorCliente);
     if (user.rol === "TERCERO") return formatCOP(valorTercero);
-    return `Cliente: ${formatCOP(valorCliente)} | Tercero: ${formatCOP(valorTercero)} | Ganancia: ${formatCOP(ganancia)}`;
+    return `Cliente: ${formatMoney(valorCliente)} | Tercero: ${formatMoney(valorTercero)} | Ganancia: ${formatMoney(ganancia)}`;  
   }
 
   function formatTimelineDate(value?: string | null): string {
@@ -2602,7 +2647,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </tr>
                   </thead>
                   <tbody>
-                    {conciliacionesFiltradas.map((c) => (
+                    {conciliacionesPaginadas.map((c) => (
                       <tr key={c.id} className="border-b border-border last:border-0">
                         <td className="px-3 py-2">{c.id}</td>
                         <td className="px-3 py-2">{c.nombre}</td>
@@ -2666,6 +2711,43 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-neutral">
+                  Mostrando {conciliacionesPaginadas.length} de {conciliacionesFiltradas.length} conciliaciones.
+                </p>
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setConciliacionesPage(1)}
+                    disabled={conciliacionesPageSafe === 1}
+                    className="rounded-md border border-border bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Inicio
+                  </button>
+                  {visibleConciliacionesPages.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setConciliacionesPage(pageNumber)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold shadow-sm transition ${
+                        pageNumber === conciliacionesPageSafe
+                          ? "bg-emerald-600 text-white"
+                          : "border border-border bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setConciliacionesPage(totalConciliacionesPages)}
+                    disabled={conciliacionesPageSafe === totalConciliacionesPages}
+                    className="rounded-md border border-border bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Final
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -2754,15 +2836,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 <table className="min-w-full border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-neutral">
-                      <th className="border-b border-border px-3 py-2 text-center" />
-                      <th className="border-b border-border px-3 py-2 text-center">ID</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Título servicio</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Operación</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Tipo servicio</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Fecha</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Ruta</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Placa</th>
-                      <th className="border-b border-border px-3 py-2 text-center">Tarifa tercero</th>
+                      <th className="border-b border-border px-3 py-2 text-left" />
+                      <th className="border-b border-border px-3 py-2 text-left">ID</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Título servicio</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Operación</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Tipo servicio</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Fecha</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Ruta</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Placa</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Tarifa tercero</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2990,7 +3072,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                   )}
                                 </td>
                                 <td className="px-2 py-1">{getConfiguracionVehiculoByPlaca(item.placa)}</td>
-                                <td className="px-2 py-1">{item.liquidacion_es_relevo ? "Conductor relevo" : "Contrato fijo"}</td>
+                                <td className="px-2 py-1">Contrato fijo</td>
                                 <td className="px-2 py-1">
                                   <span
                                     className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
@@ -3018,13 +3100,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                         placeholder="0"
                                         helperText={
                                           item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
-                                            ? `Actual: ${formatCOP(item.tarifa_tercero)}`
+                                            ? `Actual: ${formatMoney(item.tarifa_tercero)}`
                                             : "Actual: -"
                                         }
                                         className="w-24 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                                       />
                                     ) : (
-                                      formatCOP(item.tarifa_tercero)
+                                      formatMoney(item.tarifa_tercero)
                                     )}
                                   </td>
                                 )}
@@ -3042,13 +3124,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                         placeholder="0"
                                         helperText={
                                           item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
-                                            ? `Actual: ${formatCOP(item.tarifa_cliente)}`
+                                            ? `Actual: ${formatMoney(item.tarifa_cliente)}`
                                             : "Actual: -"
                                         }
                                         className="w-24 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                                       />
                                     ) : (
-                                      formatCOP(item.tarifa_cliente)
+                                      formatMoney(item.tarifa_cliente)
                                     )}
                                   </td>
                                 )}
@@ -3081,10 +3163,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
                       <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-semibold text-indigo-900">
                         {user.rol !== "CLIENTE" && (
-                          <span>Valor tercero: {formatCOP(liquidacionResumen.tarifaTercero)}</span>
+                          <span>Valor tercero: {formatMoney(liquidacionResumen.tarifaTercero)}</span>
                         )}
                         {user.rol !== "TERCERO" && (
-                          <span>Valor cliente: {formatCOP(liquidacionResumen.tarifaCliente)}</span>
+                          <span>Valor cliente: {formatMoney(liquidacionResumen.tarifaCliente)}</span>
                         )}
                         {user.rol === "COINTRA" && (
                           <>
@@ -3094,40 +3176,50 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         )}
                       </div>
 
-                      {itemsViajeBajoLiquidacion.length > 0 && (
-                        <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">Servicios VIAJE</p>
-                              <p className="text-[11px] text-indigo-800/80">
-                                Estos VIAJES corresponden a la contratacion fija.
-                              </p>
-                            </div>
-                            {user.rol === "COINTRA" && selected.estado === "BORRADOR" && dirtyManifiestosViajesBajoLiquidacionCount > 0 && (
-                              <button
-                                type="button"
-                                disabled={savingManifiestosBlock === "viajes_bajo_liquidacion"}
-                                onClick={() => void guardarManifiestosPorBloque("viajes_bajo_liquidacion")}
-                                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
-                              >
-                                {savingManifiestosBlock === "viajes_bajo_liquidacion"
-                                  ? "Guardando..."
-                                  : `Relacionar manifiestos (${dirtyManifiestosViajesBajoLiquidacionCount})`}
-                              </button>
-                            )}
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full border-collapse text-sm">
-                              <thead>
-                                <tr className="bg-indigo-100/70 text-xs font-semibold uppercase tracking-wide text-indigo-900">
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">ID</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Tipo</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Estado</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Fecha</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Origen</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Destino</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Placa</th>
-                                  <th className="border-b border-indigo-100 px-3 py-2 text-left">Manifiesto</th>
+                    </div>
+                  )}
+
+                </div>
+              )}
+            </div>
+          )}
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Servicios VIAJE</p>
+                <p className="text-xs text-neutral">
+                  Viajes asociados a esta conciliación.
+                </p>
+              </div>
+              {user.rol === "COINTRA" && selected.estado === "BORRADOR" && dirtyManifiestosViajesBajoLiquidacionCount > 0 && (
+                <button
+                  type="button"
+                  disabled={savingManifiestosBlock === "viajes_bajo_liquidacion"}
+                  onClick={() => void guardarManifiestosPorBloque("viajes_bajo_liquidacion")}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {savingManifiestosBlock === "viajes_bajo_liquidacion"
+                    ? "Guardando..."
+                    : `Relacionar manifiestos (${dirtyManifiestosViajesBajoLiquidacionCount})`}
+                </button>
+              )}
+            </div>
+            {itemsViajeBajoLiquidacion.length === 0 ? (
+              <p className="text-xs text-neutral italic">No hay viajes en esta conciliación.</p>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-indigo-100/70 text-xs font-semibold uppercase tracking-wide text-indigo-900">
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">ID</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Tipo</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Estado</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Fecha</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Origen</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Destino</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Placa</th>
+                        <th className="border-b border-indigo-100 px-3 py-2 text-left">Manifiesto</th>
                                   {user.rol === "CLIENTE" && selected.estado === "EN_REVISION" && (
                                     <th className="border-b border-indigo-100 px-3 py-2 text-left">
                                       <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-indigo-900">
@@ -3371,13 +3463,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                             placeholder="0"
                                             helperText={
                                               item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
-                                                ? `Actual: ${formatCOP(item.tarifa_tercero)}`
+                                                ? `Actual: ${formatMoney(item.tarifa_tercero)}`
                                                 : "Actual: -"
                                             }
                                             className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                                           />
                                         ) : (
-                                          formatCOP(item.tarifa_tercero)
+                                          formatMoney(item.tarifa_tercero)
                                         )}
                                       </td>
                                     )}
@@ -3393,13 +3485,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                             placeholder="0"
                                             helperText={
                                               item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
-                                                ? `Actual: ${formatCOP(item.tarifa_cliente)}`
+                                                ? `Actual: ${formatMoney(item.tarifa_cliente)}`
                                                 : "Actual: -"
                                             }
                                             className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                                           />
                                         ) : (
-                                          formatCOP(item.tarifa_cliente)
+                                          formatMoney(item.tarifa_cliente)
                                         )}
                                       </td>
                                     )}
@@ -3461,30 +3553,24 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           </div>
                           <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold text-indigo-900">
                             {user.rol === "TERCERO" && (
-                              <span>Total a cobrar: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
+                              <span>Total a cobrar: {formatMoney(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
                             )}
                             {user.rol === "CLIENTE" && (
-                              <span>Total a pagar: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
+                              <span>Total a pagar: {formatMoney(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
                             )}
                             {user.rol === "COINTRA" && (
-                              <span>Total Tercero: {formatCOP(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
+                              <span>Total Tercero: {formatMoney(totalsViajesBajoLiquidacion.tarifaTercero)}</span>
                             )}
                             {user.rol === "COINTRA" && (
-                              <span>Total Cliente: {formatCOP(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
+                              <span>Total Cliente: {formatMoney(totalsViajesBajoLiquidacion.tarifaCliente)}</span>
                             )}
                             {user.rol === "COINTRA" && (
                               <span>Total Ganancia Cointra: {formatMoney(totalsViajesBajoLiquidacion.gananciaCointra)}</span>
                             )}
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                </div>
-              )}
-            </div>
-          )}
+              </>
+            )}
+          </div>
           {user.rol === "COINTRA" && selected.estado === "BORRADOR" && (
             <div className="rounded-xl border border-border bg-slate-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3520,7 +3606,20 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowReviewPanel((prev) => !prev)}
+                    onClick={() => {
+                      // Validar que todos los items de transporte tengan manifiesto
+                      const sinManifiesto = items.filter(
+                        (it) => isTransportServiceItem(it) && !(it.manifiesto_numero ?? "").trim()
+                      );
+                      if (sinManifiesto.length > 0) {
+                        setSaveResultModal({
+                          title: "Viajes sin manifiesto",
+                          description: `Hay ${sinManifiesto.length} viaje(s) sin manifiesto asociado. Por favor completa la información antes de enviar a revisión.`,
+                        });
+                        return;
+                      }
+                      setShowReviewPanel((prev) => !prev);
+                    }}
                     disabled={!selected.borrador_guardado}
                     className="inline-flex items-center rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
                     title={
@@ -3925,11 +4024,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                               {getItemLiquidacionPeriodoLabel(item) && (
                                 <p className="text-[11px] text-slate-500">Periodo: {getItemLiquidacionPeriodoLabel(item)}</p>
                               )}
-                              {item.liquidacion_es_relevo && (
-                                <p className="text-[11px] text-slate-500">
-                                  Conductor relevo {item.liquidacion_relevo_con_valor ? "con valor" : "sin valor"}
-                                </p>
-                              )}
                             </>
                           )}
                         </td>
@@ -4050,13 +4144,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                 placeholder="0"
                                 helperText={
                                   item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
-                                    ? `Actual: ${formatCOP(item.tarifa_tercero)}`
+                                    ? `Actual: ${formatMoney(item.tarifa_tercero)}`
                                     : "Actual: -"
                                 }
                                 className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                               />
                             ) : (
-                              formatCOP(item.tarifa_tercero)
+                              formatMoney(item.tarifa_tercero)
                             )}
                           </td>
                         )}
@@ -4072,13 +4166,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                 placeholder="0"
                                 helperText={
                                   item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
-                                    ? `Actual: ${formatCOP(item.tarifa_cliente)}`
+                                    ? `Actual: ${formatMoney(item.tarifa_cliente)}`
                                     : "Actual: -"
                                 }
                                 className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                               />
                             ) : (
-                              formatCOP(item.tarifa_cliente)
+                              formatMoney(item.tarifa_cliente)
                             )}
                           </td>
                         )}
@@ -4140,16 +4234,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold text-slate-900">
                 {user.rol === "TERCERO" && (
-                  <span>Total a cobrar: {formatCOP(totals.tarifaTercero)}</span>
+                  <span>Total a cobrar: {formatMoney(totals.tarifaTercero)}</span>
                 )}
                 {user.rol === "CLIENTE" && (
-                  <span>Total a pagar: {formatCOP(totals.tarifaCliente)}</span>
+                  <span>Total a pagar: {formatMoney(totals.tarifaCliente)}</span>
                 )}
                 {user.rol === "COINTRA" && (
-                  <span>Total Tercero: {formatCOP(totals.tarifaTercero)}</span>
+                  <span>Total Tercero: {formatMoney(totals.tarifaTercero)}</span>
                 )}
                 {user.rol === "COINTRA" && (
-                  <span>Total Cliente: {formatCOP(totals.tarifaCliente)}</span>
+                  <span>Total Cliente: {formatMoney(totals.tarifaCliente)}</span>
                 )}
                 {user.rol === "COINTRA" && (
                   <span>Total Ganancia Cointra: {formatMoney(totals.gananciaCointra)}</span>

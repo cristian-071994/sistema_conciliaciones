@@ -358,12 +358,39 @@ def _build_conciliacion_totals_map(db: Session, conciliacion_ids: list[int]) -> 
         .filter(ConciliacionItem.conciliacion_id.in_(conciliacion_ids))
         .all()
     )
-    totals_map: dict[int, tuple[float, float]] = {}
+
+    # Detectar qué conciliaciones tienen registros de contrato fijo y sus placas
+    conc_liquidacion_placas: dict[int, set[str]] = {}
     for item in items:
         if _extract_liquidacion_metadata(item):
-            continue
-        current_cliente, current_tercero = totals_map.get(int(item.conciliacion_id), (0.0, 0.0))
-        totals_map[int(item.conciliacion_id)] = (
+            cid = int(item.conciliacion_id)
+            if cid not in conc_liquidacion_placas:
+                conc_liquidacion_placas[cid] = set()
+            placa = (item.placa or "").strip().upper()
+            if placa:
+                conc_liquidacion_placas[cid].add(placa)
+
+    totals_map: dict[int, tuple[float, float]] = {}
+    for item in items:
+        cid = int(item.conciliacion_id)
+        is_liquidacion = bool(_extract_liquidacion_metadata(item))
+        svc_code = (item.servicio_codigo or "").strip().upper() if not is_liquidacion else ""
+        is_viaje = svc_code == "VIAJE"
+
+        if cid in conc_liquidacion_placas:
+            # Tiene contrato fijo: total = liquidación (bloque 1) + adicionales (bloque 3)
+            # Bloque 2 = VIAJEs con placa que coincide con liquidación → excluir
+            if is_viaje:
+                item_placa = (item.placa or "").strip().upper()
+                if item_placa in conc_liquidacion_placas[cid]:
+                    continue  # Es bloque 2, no sumar
+        else:
+            # Sin contrato fijo: total = viajes (bloque 2) + adicionales (bloque 3)
+            if is_liquidacion:
+                continue
+
+        current_cliente, current_tercero = totals_map.get(cid, (0.0, 0.0))
+        totals_map[cid] = (
             current_cliente + float(item.tarifa_cliente or 0),
             current_tercero + float(item.tarifa_tercero or 0),
         )
@@ -463,23 +490,18 @@ def _build_liquidacion_metadata(
     liquidacion_id: int,
     periodo_inicio: date,
     periodo_fin: date,
-    es_relevo: bool,
-    relevo_con_valor: bool | None,
 ) -> str:
     payload = {
         "kind": "LIQUIDACION_CONTRATO_FIJO",
         "liquidacion_id": liquidacion_id,
         "periodo_inicio": str(periodo_inicio),
         "periodo_fin": str(periodo_fin),
-        "es_relevo": es_relevo,
     }
-    if relevo_con_valor is not None:
-        payload["relevo_con_valor"] = relevo_con_valor
     return json.dumps(payload, ensure_ascii=True)
 
 
 def _extract_liquidacion_metadata(item: ConciliacionItem) -> dict | None:
-    if item.tipo not in {ItemTipo.OTRO, ItemTipo.CONDUCTOR_RELEVO}:
+    if item.tipo != ItemTipo.OTRO:
         return None
     raw = (item.descripcion or "").strip()
     if not raw:
@@ -504,8 +526,6 @@ def _extract_liquidacion_metadata(item: ConciliacionItem) -> dict | None:
         "liquidacion_contrato_fijo_id": payload.get("liquidacion_id"),
         "liquidacion_periodo_inicio": periodo_inicio,
         "liquidacion_periodo_fin": periodo_fin,
-        "liquidacion_es_relevo": bool(payload.get("es_relevo", item.tipo == ItemTipo.CONDUCTOR_RELEVO)),
-        "liquidacion_relevo_con_valor": payload.get("relevo_con_valor"),
     }
 
 
@@ -858,7 +878,7 @@ def _build_facturacion_excel(conc: Conciliacion, rows: list[dict]) -> bytes:
     return output.getvalue()
 
 
-def _build_conciliacion_excel(
+def _build_conciliacion_excel_legacy(
     conc: Conciliacion,
     items: list[ConciliacionItem],
     user_role: UserRole,
@@ -950,8 +970,6 @@ def _build_conciliacion_excel(
     for item, liq_meta in liquidacion_items_sorted:
         placa = (item.placa or "").upper()
         tipo_vehiculo = tipo_vehiculo_by_placa.get(placa, "")
-        if liq_meta.get("liquidacion_es_relevo"):
-            tipo_vehiculo = "CONDUCTOR RELEVO"
 
         tarifa_tercero = _as_float(item.tarifa_tercero)
         tarifa_cliente = _as_float(item.tarifa_cliente)
@@ -1276,7 +1294,8 @@ def _build_conciliacion_excel(
             per_manifest_cliente = _split_total_evenly(total_placa_cliente, manifest_count)
 
             if plate_index > 0:
-                current_row += 2
+                row_num_spacer = current_row
+                current_row += 1
                 _write_servicios_block_header(current_row)
                 current_row += 1
 
@@ -1403,6 +1422,883 @@ def _build_conciliacion_excel(
     }
     for header, idx in servicios_col_idx.items():
         ws_servicios.column_dimensions[get_column_letter(idx)].width = servicios_widths.get(header, 18)
+
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def _build_conciliacion_excel(
+    conc: Conciliacion,
+    items: list[ConciliacionItem],
+    user_role: UserRole,
+    tipo_vehiculo_by_placa: dict[str, str],
+    avansat_prefetched: dict[str, dict] | None = None,
+) -> bytes:
+    liquidacion_items: list[tuple[ConciliacionItem, dict]] = []
+    non_liquidacion_items: list[ConciliacionItem] = []
+    for item in items:
+        liq_meta = _extract_liquidacion_metadata(item)
+        if liq_meta:
+            liquidacion_items.append((item, liq_meta))
+        else:
+            non_liquidacion_items.append(item)
+
+    if not liquidacion_items:
+        return _build_conciliacion_excel_legacy(
+            conc,
+            items,
+            user_role,
+            tipo_vehiculo_by_placa,
+            avansat_prefetched,
+        )
+
+    liquidacion_placas = {
+        str(item.placa or "").strip().upper()
+        for item, _ in liquidacion_items
+        if str(item.placa or "").strip()
+    }
+
+    def _item_service_code_upper(item: ConciliacionItem) -> str:
+        codigo_viaje = _item_servicio_codigo(item)
+        if codigo_viaje:
+            return codigo_viaje
+        return str(item.servicio_codigo or "").strip().upper()
+
+    def _item_service_label(item: ConciliacionItem) -> str:
+        return (item.servicio_nombre or "").strip() or _item_service_code_upper(item) or str(getattr(item.tipo, "value", item.tipo))
+
+    quincena_items: list[ConciliacionItem] = []
+    additional_items: list[ConciliacionItem] = []
+    for item in non_liquidacion_items:
+        placa = str(item.placa or "").strip().upper()
+        service_code = _item_service_code_upper(item) or "VIAJE"
+        if item.tipo == ItemTipo.VIAJE and service_code == "VIAJE" and placa in liquidacion_placas:
+            quincena_items.append(item)
+        else:
+            additional_items.append(item)
+
+    wb = Workbook()
+    ws_resumen = wb.active
+    ws_resumen.title = "Resumen"
+    ws_quincena = wb.create_sheet("Quincena")
+    ws_adicionales = wb.create_sheet("Adicionales")
+
+    header_fill = PatternFill(fill_type="solid", fgColor="E5E7EB")
+    header_font = Font(bold=True, color="1F2937")
+    section_fill = PatternFill(fill_type="solid", fgColor="FDE68A")
+    section_font = Font(bold=True, color="111827")
+    center = Alignment(horizontal="center", vertical="center")
+    thin = Side(style="thin", color="D1D5DB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    cop_format = '"$" #,##0'
+    pct_format = '#,##0.##" %"'
+
+    show_tarifa_tercero = user_role != UserRole.CLIENTE
+    show_tarifa_cliente = user_role != UserRole.TERCERO
+    show_cointra_financials = user_role == UserRole.COINTRA
+
+    estado_display = _display_estado(conc)
+    estado_label = estado_display.replace("_", " ")
+    estado_styles = {
+        "BORRADOR": ("ECFDF5", "065F46"),
+        "EN_REVISION": ("FFFBEB", "92400E"),
+        "APROBADA": ("F0FDFA", "115E59"),
+        "ENVIADA_A_FACTURAR": ("F0F9FF", "075985"),
+    }
+    estado_fill_color, estado_font_color = estado_styles.get(estado_display, ("F7FEE7", "3F6212"))
+
+    def _write_report_header(ws, title: str) -> int:
+        row_num = 1
+        ws.cell(row=row_num, column=1, value=f"Conciliacion #{conc.id} - {conc.nombre}")
+        ws.cell(row=row_num, column=1).font = Font(bold=True, size=12, color="111827")
+        ws.cell(row=row_num, column=1).alignment = Alignment(horizontal="left", vertical="center")
+        title_cell = ws.cell(row=row_num, column=5, value=title)
+        title_cell.font = Font(bold=True, size=12, color="111827")
+        estado_cell = ws.cell(row=row_num, column=7, value=f"ESTADO: {estado_label}")
+        estado_cell.fill = PatternFill(fill_type="solid", fgColor=estado_fill_color)
+        estado_cell.font = Font(bold=True, color=estado_font_color)
+        estado_cell.alignment = center
+        estado_cell.border = border
+        row_num += 1
+        ws.cell(row=row_num, column=1, value=f"Periodo: {conc.fecha_inicio} a {conc.fecha_fin}")
+        ws.cell(row=row_num, column=1).font = Font(size=10, color="374151")
+        return row_num + 2
+
+    def _write_headers(ws, row_num: int, headers: list[str]) -> dict[str, int]:
+        for idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=row_num, column=idx, value=header)
+            cell.fill = header_fill
+            if header in {"Valor Cliente", "Valor Tercero", "Rentabilidad", "Ganancia Cointra"}:
+                cell.fill = section_fill
+            cell.font = header_font
+            cell.alignment = center
+            cell.border = border
+        return {header: idx for idx, header in enumerate(headers, start=1)}
+
+    def _style_row(ws, row_num: int, columns_count: int, fill: PatternFill | None = None, font: Font | None = None) -> None:
+        for col_idx in range(1, columns_count + 1):
+            cell = ws.cell(row=row_num, column=col_idx)
+            cell.border = border
+            if fill is not None:
+                cell.fill = fill
+            if font is not None:
+                cell.font = font
+
+    def _write_financials(
+        ws,
+        row_num: int,
+        col_idx: dict[str, int],
+        tarifa_cliente: float,
+        tarifa_tercero: float,
+    ) -> None:
+        ganancia = tarifa_cliente - tarifa_tercero
+        rentabilidad = (ganancia / tarifa_cliente * 100) if tarifa_cliente > 0 else 0.0
+        if "Valor Cliente" in col_idx:
+            c = ws.cell(row=row_num, column=col_idx["Valor Cliente"], value=tarifa_cliente)
+            c.number_format = cop_format
+        if "Valor Tercero" in col_idx:
+            c = ws.cell(row=row_num, column=col_idx["Valor Tercero"], value=tarifa_tercero)
+            c.number_format = cop_format
+        if "Rentabilidad" in col_idx:
+            c = ws.cell(row=row_num, column=col_idx["Rentabilidad"], value=rentabilidad)
+            c.number_format = pct_format
+        if "Ganancia Cointra" in col_idx:
+            c = ws.cell(row=row_num, column=col_idx["Ganancia Cointra"], value=ganancia)
+            c.number_format = cop_format
+
+    def _accumulate_totals(source_items: list[ConciliacionItem]) -> dict[str, dict[str, float]]:
+        totals: dict[str, dict[str, float]] = {}
+        for source_item in source_items:
+            placa = str(source_item.placa or "").strip().upper() or "SIN_PLACA"
+            bucket = totals.setdefault(placa, {"cliente": 0.0, "tercero": 0.0})
+            bucket["cliente"] += _as_float(source_item.tarifa_cliente)
+            bucket["tercero"] += _as_float(source_item.tarifa_tercero)
+        return totals
+
+    def _manifest_context(item: ConciliacionItem) -> dict[str, object]:
+        manifiesto = _normalize_manifiesto_for_lookup(item.manifiesto_numero)
+        avansat = (avansat_prefetched or {}).get(manifiesto) or {}
+        has_manifiesto = bool(manifiesto)
+        remesas = avansat.get("remesas") if isinstance(avansat.get("remesas"), list) else []
+        remesas_rows = [row for row in remesas if isinstance(row, dict)]
+        if not remesas_rows:
+            remesas_rows = [
+                {
+                    "remesa": item.remesa or avansat.get("remesa") or "",
+                    "producto": avansat.get("producto") or "",
+                }
+            ]
+        return {
+            "manifiesto": manifiesto,
+            "has_manifiesto": has_manifiesto,
+            "fecha_emision": avansat.get("fecha_emision") or str(item.fecha_servicio or ""),
+            "placa": str(item.placa or "").strip().upper() or "SIN_PLACA",
+            "trayler": avansat.get("trayler") or "",
+            "ciudad_origen": avansat.get("ciudad_origen") or item.origen or "",
+            "ciudad_destino": avansat.get("ciudad_destino") or item.destino or "",
+            "remesas": remesas_rows,
+        }
+
+    def _write_adicionales_unified_section(
+        ws,
+        start_row: int,
+        title: str,
+        source_items: list[ConciliacionItem],
+    ) -> tuple[int, dict[str, int], float, float, float, float]:
+        ws.cell(row=start_row, column=1, value=title)
+        ws.cell(row=start_row, column=1).font = Font(bold=True, size=11, color="111827")
+        headers = [
+            "Manifiesto",
+            "Fecha Emision",
+            "Placa Vehiculo",
+            "Trayler",
+            "Remesa",
+            "Producto",
+            "Ciudad Origen",
+            "Ciudad Destino",
+        ]
+        if show_tarifa_cliente:
+            headers.append("Valor Cliente")
+        if show_tarifa_tercero:
+            headers.append("Valor Tercero")
+        if show_cointra_financials:
+            headers.extend(["Rentabilidad", "Ganancia Cointra"])
+
+        col_idx = _write_headers(ws, start_row + 1, headers)
+        row_num = start_row + 2
+        total_viajes_cliente = 0.0
+        total_viajes_tercero = 0.0
+        total_servicios_cliente = 0.0
+        total_servicios_tercero = 0.0
+
+        sorted_items = sorted(
+            source_items,
+            key=lambda current: (
+                str(current.placa or "").strip().upper(),
+                current.fecha_servicio,
+                current.id,
+            ),
+        )
+
+        if not sorted_items:
+            ws.cell(row=row_num, column=1, value="(sin adicionales)")
+            ws.cell(row=row_num, column=1).font = Font(italic=True, color="6B7280")
+            return row_num + 1, col_idx, total_viajes_cliente, total_viajes_tercero, total_servicios_cliente, total_servicios_tercero
+
+        grouped_items: dict[str, list[ConciliacionItem]] = {}
+        for item in sorted_items:
+            placa = str(item.placa or "").strip().upper() or "SIN_PLACA"
+            grouped_items.setdefault(placa, []).append(item)
+
+        ordered_placas = sorted(grouped_items.keys())
+        for placa_idx, placa in enumerate(ordered_placas):
+            if placa_idx > 0:
+                _write_headers(ws, row_num, headers)
+                row_num += 1
+            placa_total_cliente = 0.0
+            placa_total_tercero = 0.0
+
+            for item in grouped_items[placa]:
+                manifest_data = _manifest_context(item)
+                has_manifiesto = bool(manifest_data["has_manifiesto"])
+                manifiesto_str = str(manifest_data["manifiesto"] or "")
+                service_label = _item_service_label(item) if not has_manifiesto else ""
+
+                tarifa_cliente = _as_float(item.tarifa_cliente)
+                tarifa_tercero = _as_float(item.tarifa_tercero)
+                placa_total_cliente += tarifa_cliente
+                placa_total_tercero += tarifa_tercero
+
+                if has_manifiesto:
+                    total_viajes_cliente += tarifa_cliente
+                    total_viajes_tercero += tarifa_tercero
+                else:
+                    total_servicios_cliente += tarifa_cliente
+                    total_servicios_tercero += tarifa_tercero
+
+                first_row = True
+                for remesa_row in manifest_data["remesas"]:
+                    values = {
+                        "Manifiesto": manifiesto_str if first_row else "",
+                        "Fecha Emision": manifest_data["fecha_emision"],
+                        "Placa Vehiculo": placa,
+                        "Trayler": manifest_data["trayler"],
+                        "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
+                        "Producto": service_label if (first_row and not has_manifiesto) else str((remesa_row or {}).get("producto") or "").strip(),
+                        "Ciudad Origen": manifest_data["ciudad_origen"],
+                        "Ciudad Destino": manifest_data["ciudad_destino"],
+                    }
+                    for header, column in col_idx.items():
+                        if header in values:
+                            ws.cell(row=row_num, column=column, value=values[header])
+                    if first_row:
+                        _write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero)
+                    _style_row(ws, row_num, len(headers))
+                    row_num += 1
+                    first_row = False
+
+            ws.cell(row=row_num, column=col_idx["Ciudad Destino"], value=f"TOTAL PLACA {placa}")
+            _write_financials(ws, row_num, col_idx, placa_total_cliente, placa_total_tercero)
+            _style_row(ws, row_num, len(headers), fill=section_fill, font=section_font)
+            row_num += 2
+
+        return row_num, col_idx, total_viajes_cliente, total_viajes_tercero, total_servicios_cliente, total_servicios_tercero
+
+    def _write_transport_section(
+        ws,
+        start_row: int,
+        title: str,
+        source_items: list[ConciliacionItem],
+        write_plate_totals: bool = False,
+        totals_label_prefix: str = "TOTAL PLACA",
+    ) -> tuple[int, dict[str, int], float, float, dict[str, dict[str, float]]]:
+        ws.cell(row=start_row, column=1, value=title)
+        ws.cell(row=start_row, column=1).font = Font(bold=True, size=11, color="111827")
+        headers = [
+            "Manifiesto",
+            "Fecha Emision",
+            "Placa Vehiculo",
+            "Trayler",
+            "Remesa",
+            "Producto",
+            "Ciudad Origen",
+            "Ciudad Destino",
+        ]
+        if show_tarifa_cliente:
+            headers.append("Valor Cliente")
+        if show_tarifa_tercero:
+            headers.append("Valor Tercero")
+        if show_cointra_financials:
+            headers.extend(["Rentabilidad", "Ganancia Cointra"])
+
+        col_idx = _write_headers(ws, start_row + 1, headers)
+        row_num = start_row + 2
+        total_cliente = 0.0
+        total_tercero = 0.0
+        totals_by_placa = _accumulate_totals(source_items)
+        sorted_items = sorted(
+            source_items,
+            key=lambda current: (
+                str(current.placa or "").strip().upper(),
+                current.fecha_servicio,
+                current.id,
+            ),
+        )
+
+        if not sorted_items:
+            ws.cell(row=row_num, column=1, value="(sin registros)")
+            ws.cell(row=row_num, column=1).font = Font(italic=True, color="6B7280")
+            return row_num + 1, col_idx, total_cliente, total_tercero, totals_by_placa
+
+        if write_plate_totals:
+            grouped_items: dict[str, list[ConciliacionItem]] = {}
+            for item in sorted_items:
+                placa = str(item.placa or "").strip().upper() or "SIN_PLACA"
+                grouped_items.setdefault(placa, []).append(item)
+
+            ordered_placas = sorted(grouped_items.keys())
+            for placa_idx, placa in enumerate(ordered_placas):
+                if placa_idx > 0:
+                    _write_headers(ws, row_num, headers)
+                    row_num += 1
+                for item in grouped_items[placa]:
+                    manifest_data = _manifest_context(item)
+                    tarifa_cliente = _as_float(item.tarifa_cliente)
+                    tarifa_tercero = _as_float(item.tarifa_tercero)
+                    total_cliente += tarifa_cliente
+                    total_tercero += tarifa_tercero
+
+                    first_row = True
+                    for remesa_row in manifest_data["remesas"]:
+                        values = {
+                            "Manifiesto": manifest_data["manifiesto"],
+                            "Fecha Emision": manifest_data["fecha_emision"],
+                            "Placa Vehiculo": placa,
+                            "Trayler": manifest_data["trayler"],
+                            "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
+                            "Producto": str((remesa_row or {}).get("producto") or "").strip(),
+                            "Ciudad Origen": manifest_data["ciudad_origen"],
+                            "Ciudad Destino": manifest_data["ciudad_destino"],
+                        }
+                        for header, column in col_idx.items():
+                            if header in values:
+                                ws.cell(row=row_num, column=column, value=values[header])
+                        if first_row:
+                            _write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero)
+                        _style_row(ws, row_num, len(headers))
+                        row_num += 1
+                        first_row = False
+
+                placa_totals = totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+                ws.cell(row=row_num, column=col_idx["Ciudad Destino"], value=f"{totals_label_prefix} {placa}")
+                _write_financials(
+                    ws,
+                    row_num,
+                    col_idx,
+                    placa_totals["cliente"],
+                    placa_totals["tercero"],
+                )
+                _style_row(ws, row_num, len(headers), fill=section_fill, font=section_font)
+                row_num += 2
+
+            return row_num, col_idx, total_cliente, total_tercero, totals_by_placa
+
+        current_placa = None
+        for item in sorted_items:
+            manifest_data = _manifest_context(item)
+            placa = str(manifest_data["placa"])
+            if current_placa is not None and placa != current_placa:
+                row_num += 1  # fila en blanco de separación
+                _write_headers(ws, row_num, headers)
+                row_num += 1
+            current_placa = placa
+
+            tarifa_cliente = _as_float(item.tarifa_cliente)
+            tarifa_tercero = _as_float(item.tarifa_tercero)
+            total_cliente += tarifa_cliente
+            total_tercero += tarifa_tercero
+
+            first_row = True
+            for remesa_row in manifest_data["remesas"]:
+                values = {
+                    "Manifiesto": manifest_data["manifiesto"],
+                    "Fecha Emision": manifest_data["fecha_emision"],
+                    "Placa Vehiculo": placa,
+                    "Trayler": manifest_data["trayler"],
+                    "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
+                    "Producto": str((remesa_row or {}).get("producto") or "").strip(),
+                    "Ciudad Origen": manifest_data["ciudad_origen"],
+                    "Ciudad Destino": manifest_data["ciudad_destino"],
+                }
+                for header, column in col_idx.items():
+                    if header in values:
+                        ws.cell(row=row_num, column=column, value=values[header])
+                if first_row:
+                    _write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero)
+                _style_row(ws, row_num, len(headers))
+                row_num += 1
+                first_row = False
+
+        return row_num, col_idx, total_cliente, total_tercero, totals_by_placa
+
+    def _write_additional_services_section(
+        ws,
+        start_row: int,
+        title: str,
+        source_items: list[ConciliacionItem],
+        write_plate_totals: bool = False,
+        totals_label_prefix: str = "TOTAL PLACA",
+    ) -> tuple[int, dict[str, int], float, float]:
+        ws.cell(row=start_row, column=1, value=title)
+        ws.cell(row=start_row, column=1).font = Font(bold=True, size=11, color="111827")
+        headers = ["Placa", "Tipo Vehiculo", "Fecha", "Titulo Servicio", "Tipo Servicio"]
+        if show_tarifa_cliente:
+            headers.append("Valor Cliente")
+        if show_tarifa_tercero:
+            headers.append("Valor Tercero")
+        if show_cointra_financials:
+            headers.extend(["Rentabilidad", "Ganancia Cointra"])
+        headers.append("Observaciones")
+
+        col_idx = _write_headers(ws, start_row + 1, headers)
+        row_num = start_row + 2
+        total_cliente = 0.0
+        total_tercero = 0.0
+        sorted_items = sorted(
+            source_items,
+            key=lambda current: (
+                str(current.placa or "").strip().upper(),
+                current.fecha_servicio,
+                current.id,
+            ),
+        )
+
+        if not sorted_items:
+            ws.cell(row=row_num, column=1, value="(sin servicios)")
+            ws.cell(row=row_num, column=1).font = Font(italic=True, color="6B7280")
+            return row_num + 1, col_idx, total_cliente, total_tercero
+
+        if write_plate_totals:
+            grouped_items: dict[str, list[ConciliacionItem]] = {}
+            for item in sorted_items:
+                placa = str(item.placa or "").strip().upper() or "SIN_PLACA"
+                grouped_items.setdefault(placa, []).append(item)
+
+            ordered_placas = sorted(grouped_items.keys())
+            for placa in ordered_placas:
+                placa_total_cliente = 0.0
+                placa_total_tercero = 0.0
+                for item in grouped_items[placa]:
+                    tarifa_cliente = _as_float(item.tarifa_cliente)
+                    tarifa_tercero = _as_float(item.tarifa_tercero)
+                    total_cliente += tarifa_cliente
+                    total_tercero += tarifa_tercero
+                    placa_total_cliente += tarifa_cliente
+                    placa_total_tercero += tarifa_tercero
+                    values = {
+                        "Placa": placa,
+                        "Tipo Vehiculo": tipo_vehiculo_by_placa.get(placa, ""),
+                        "Fecha": str(item.fecha_servicio or ""),
+                        "Titulo Servicio": item.viaje.titulo if item.viaje else "",
+                        "Tipo Servicio": (item.servicio_nombre or "").strip()
+                        or (item.servicio_codigo or "").strip()
+                        or str(getattr(item.tipo, "value", item.tipo)),
+                        "Observaciones": item.descripcion or "",
+                    }
+                    for header, column in col_idx.items():
+                        if header in values:
+                            ws.cell(row=row_num, column=column, value=values[header])
+                    _write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero)
+                    _style_row(ws, row_num, len(headers))
+                    row_num += 1
+
+                ws.cell(row=row_num, column=col_idx["Tipo Vehiculo"], value=f"{totals_label_prefix} {placa}")
+                _write_financials(ws, row_num, col_idx, placa_total_cliente, placa_total_tercero)
+                _style_row(ws, row_num, len(headers), fill=section_fill, font=section_font)
+                row_num += 2
+
+            return row_num, col_idx, total_cliente, total_tercero
+
+        for item in sorted_items:
+            placa = str(item.placa or "").strip().upper() or "SIN_PLACA"
+            tarifa_cliente = _as_float(item.tarifa_cliente)
+            tarifa_tercero = _as_float(item.tarifa_tercero)
+            total_cliente += tarifa_cliente
+            total_tercero += tarifa_tercero
+            values = {
+                "Placa": placa,
+                "Tipo Vehiculo": tipo_vehiculo_by_placa.get(placa, ""),
+                "Fecha": str(item.fecha_servicio or ""),
+                "Titulo Servicio": item.viaje.titulo if item.viaje else "",
+                "Tipo Servicio": (item.servicio_nombre or "").strip()
+                or (item.servicio_codigo or "").strip()
+                or str(getattr(item.tipo, "value", item.tipo)),
+                "Observaciones": item.descripcion or "",
+            }
+            for header, column in col_idx.items():
+                if header in values:
+                    ws.cell(row=row_num, column=column, value=values[header])
+            _write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero)
+            _style_row(ws, row_num, len(headers))
+            row_num += 1
+
+        return row_num, col_idx, total_cliente, total_tercero
+
+    liquidacion_items_sorted = sorted(
+        liquidacion_items,
+        key=lambda pair: (
+            str(pair[0].placa or "").strip().upper(),
+            pair[0].fecha_servicio,
+            pair[0].id,
+        ),
+    )
+    liquidacion_totals_by_placa = _accumulate_totals([item for item, _ in liquidacion_items_sorted])
+
+    current_row = _write_report_header(ws_resumen, "Resumen")
+    ws_resumen.cell(row=current_row, column=1, value="LIQUIDACION CONTRATO FIJO")
+    ws_resumen.cell(row=current_row, column=1).font = Font(bold=True, size=11, color="111827")
+    top_headers = ["Placa", "Tipo Vehiculo"]
+    if show_tarifa_cliente:
+        top_headers.append("Valor Cliente")
+    if show_tarifa_tercero:
+        top_headers.append("Valor Tercero")
+    if show_cointra_financials:
+        top_headers.extend(["Rentabilidad", "Ganancia Cointra"])
+    top_col_idx = _write_headers(ws_resumen, current_row + 1, top_headers)
+    current_row += 2
+
+    top_total_cliente = 0.0
+    top_total_tercero = 0.0
+    for item, _ in liquidacion_items_sorted:
+        placa = str(item.placa or "").strip().upper()
+        tarifa_cliente = _as_float(item.tarifa_cliente)
+        tarifa_tercero = _as_float(item.tarifa_tercero)
+        top_total_cliente += tarifa_cliente
+        top_total_tercero += tarifa_tercero
+        ws_resumen.cell(row=current_row, column=top_col_idx["Placa"], value=placa)
+        ws_resumen.cell(
+            row=current_row,
+            column=top_col_idx["Tipo Vehiculo"],
+            value=tipo_vehiculo_by_placa.get(placa, ""),
+        )
+        _write_financials(ws_resumen, current_row, top_col_idx, tarifa_cliente, tarifa_tercero)
+        _style_row(ws_resumen, current_row, len(top_headers))
+        current_row += 1
+
+    ws_resumen.cell(row=current_row, column=2, value="TOTAL CONTRATO FIJO")
+    _write_financials(ws_resumen, current_row, top_col_idx, top_total_cliente, top_total_tercero)
+    _style_row(ws_resumen, current_row, len(top_headers), fill=section_fill, font=section_font)
+    current_row += 2
+
+    summary_row, summary_bottom_idx, summary_total_cliente, summary_total_tercero = _write_additional_services_section(
+        ws_resumen,
+        current_row,
+        "ADICIONALES",
+        additional_items,
+    )
+    if additional_items:
+        ws_resumen.cell(row=summary_row, column=2, value="TOTAL ADICIONALES")
+        _write_financials(ws_resumen, summary_row, summary_bottom_idx, summary_total_cliente, summary_total_tercero)
+        _style_row(
+            ws_resumen,
+            summary_row,
+            len(summary_bottom_idx),
+            fill=section_fill,
+            font=section_font,
+        )
+
+    current_row = _write_report_header(ws_quincena, "Quincena")
+    current_row, quincena_col_idx, _, _, quincena_totals_by_placa = _write_transport_section(
+        ws_quincena,
+        current_row,
+        "VIAJES",
+        quincena_items,
+    )
+    current_row += 2
+
+    ws_quincena.cell(row=current_row, column=1, value="DISPONIBILIDAD")
+    ws_quincena.cell(row=current_row, column=1).font = Font(bold=True, size=11, color="111827")
+    disponibilidad_headers = ["Placa", "Tipo Vehiculo"]
+    if show_tarifa_cliente:
+        disponibilidad_headers.append("Valor Cliente")
+    if show_tarifa_tercero:
+        disponibilidad_headers.append("Valor Tercero")
+    if show_cointra_financials:
+        disponibilidad_headers.append("Ganancia Cointra")
+    disponibilidad_col_idx = _write_headers(ws_quincena, current_row + 1, disponibilidad_headers)
+    current_row += 2
+
+    for placa in sorted(liquidacion_totals_by_placa.keys()):
+        liq_totals = liquidacion_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        viajes_totals = quincena_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        disponibilidad_cliente = liq_totals["cliente"] - viajes_totals["cliente"]
+        disponibilidad_tercero = liq_totals["tercero"] - viajes_totals["tercero"]
+        ws_quincena.cell(row=current_row, column=disponibilidad_col_idx["Placa"], value=placa)
+        ws_quincena.cell(
+            row=current_row,
+            column=disponibilidad_col_idx["Tipo Vehiculo"],
+            value=tipo_vehiculo_by_placa.get(placa, ""),
+        )
+        if "Valor Cliente" in disponibilidad_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=disponibilidad_col_idx["Valor Cliente"],
+                value=disponibilidad_cliente,
+            )
+            c.number_format = cop_format
+        if "Valor Tercero" in disponibilidad_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=disponibilidad_col_idx["Valor Tercero"],
+                value=disponibilidad_tercero,
+            )
+            c.number_format = cop_format
+        if "Ganancia Cointra" in disponibilidad_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=disponibilidad_col_idx["Ganancia Cointra"],
+                value=disponibilidad_cliente - disponibilidad_tercero,
+            )
+            c.number_format = cop_format
+        _style_row(ws_quincena, current_row, len(disponibilidad_headers))
+        current_row += 1
+
+    current_row += 2
+    ws_quincena.cell(row=current_row, column=1, value="TOTALES POR VEHICULO")
+    ws_quincena.cell(row=current_row, column=1).font = Font(bold=True, size=11, color="111827")
+    resumen_quincena_headers = ["Placa", "Concepto"]
+    if show_tarifa_cliente:
+        resumen_quincena_headers.append("Valor Cliente")
+    if show_tarifa_tercero:
+        resumen_quincena_headers.append("Valor Tercero")
+    if show_cointra_financials:
+        resumen_quincena_headers.append("Ganancia Cointra")
+    resumen_quincena_col_idx = _write_headers(ws_quincena, current_row + 1, resumen_quincena_headers)
+    current_row += 2
+
+    for placa in sorted(liquidacion_totals_by_placa.keys()):
+        liq_totals = liquidacion_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        viajes_totals = quincena_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        disponibilidad_cliente = liq_totals["cliente"] - viajes_totals["cliente"]
+        disponibilidad_tercero = liq_totals["tercero"] - viajes_totals["tercero"]
+        rows = [
+            ("TOTAL VIAJES", viajes_totals["cliente"], viajes_totals["tercero"]),
+            ("TOTAL DISPONIBILIDAD", disponibilidad_cliente, disponibilidad_tercero),
+            ("TOTAL LIQUIDADO", viajes_totals["cliente"] + disponibilidad_cliente, viajes_totals["tercero"] + disponibilidad_tercero),
+        ]
+        for label, total_cliente, total_tercero in rows:
+            ws_quincena.cell(row=current_row, column=resumen_quincena_col_idx["Placa"], value=placa)
+            ws_quincena.cell(row=current_row, column=resumen_quincena_col_idx["Concepto"], value=label)
+            if "Valor Cliente" in resumen_quincena_col_idx:
+                c = ws_quincena.cell(
+                    row=current_row,
+                    column=resumen_quincena_col_idx["Valor Cliente"],
+                    value=total_cliente,
+                )
+                c.number_format = cop_format
+            if "Valor Tercero" in resumen_quincena_col_idx:
+                c = ws_quincena.cell(
+                    row=current_row,
+                    column=resumen_quincena_col_idx["Valor Tercero"],
+                    value=total_tercero,
+                )
+                c.number_format = cop_format
+            if "Ganancia Cointra" in resumen_quincena_col_idx:
+                c = ws_quincena.cell(
+                    row=current_row,
+                    column=resumen_quincena_col_idx["Ganancia Cointra"],
+                    value=total_cliente - total_tercero,
+                )
+                c.number_format = cop_format
+            _style_row(ws_quincena, current_row, len(resumen_quincena_headers), font=section_font)
+            current_row += 1
+        current_row += 1
+
+    current_row += 1
+    ws_quincena.cell(row=current_row, column=1, value="CONSOLIDADO FACTURA")
+    ws_quincena.cell(row=current_row, column=1).font = Font(bold=True, size=11, color="111827")
+    consolidated_headers = ["Concepto"]
+    if show_tarifa_cliente:
+        consolidated_headers.append("Valor Cliente")
+    if show_tarifa_tercero:
+        consolidated_headers.append("Valor Tercero")
+    if show_cointra_financials:
+        consolidated_headers.append("Ganancia Cointra")
+    consolidated_col_idx = _write_headers(ws_quincena, current_row + 1, consolidated_headers)
+    current_row += 2
+
+    total_viajes_cliente = sum(values.get("cliente", 0.0) for values in quincena_totals_by_placa.values())
+    total_viajes_tercero = sum(values.get("tercero", 0.0) for values in quincena_totals_by_placa.values())
+    total_disponibilidad_cliente = 0.0
+    total_disponibilidad_tercero = 0.0
+    for placa in liquidacion_totals_by_placa.keys():
+        liq_totals = liquidacion_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        viajes_totals = quincena_totals_by_placa.get(placa, {"cliente": 0.0, "tercero": 0.0})
+        total_disponibilidad_cliente += liq_totals["cliente"] - viajes_totals["cliente"]
+        total_disponibilidad_tercero += liq_totals["tercero"] - viajes_totals["tercero"]
+
+    consolidated_rows = [
+        ("FACTURA VIAJES", total_viajes_cliente, total_viajes_tercero),
+        ("FACTURA DISPONIBILIDAD", total_disponibilidad_cliente, total_disponibilidad_tercero),
+    ]
+    for label, total_cliente, total_tercero in consolidated_rows:
+        ws_quincena.cell(row=current_row, column=consolidated_col_idx["Concepto"], value=label)
+        if "Valor Cliente" in consolidated_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=consolidated_col_idx["Valor Cliente"],
+                value=total_cliente,
+            )
+            c.number_format = cop_format
+        if "Valor Tercero" in consolidated_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=consolidated_col_idx["Valor Tercero"],
+                value=total_tercero,
+            )
+            c.number_format = cop_format
+        if "Ganancia Cointra" in consolidated_col_idx:
+            c = ws_quincena.cell(
+                row=current_row,
+                column=consolidated_col_idx["Ganancia Cointra"],
+                value=total_cliente - total_tercero,
+            )
+            c.number_format = cop_format
+        _style_row(ws_quincena, current_row, len(consolidated_headers), fill=section_fill, font=section_font)
+        current_row += 1
+
+    current_row += 1
+    factura_total_cliente = total_viajes_cliente + total_disponibilidad_cliente
+    factura_total_tercero = total_viajes_tercero + total_disponibilidad_tercero
+    ws_quincena.cell(row=current_row, column=consolidated_col_idx["Concepto"], value="TOTAL FACTURA")
+    if "Valor Cliente" in consolidated_col_idx:
+        c = ws_quincena.cell(
+            row=current_row,
+            column=consolidated_col_idx["Valor Cliente"],
+            value=factura_total_cliente,
+        )
+        c.number_format = cop_format
+    if "Valor Tercero" in consolidated_col_idx:
+        c = ws_quincena.cell(
+            row=current_row,
+            column=consolidated_col_idx["Valor Tercero"],
+            value=factura_total_tercero,
+        )
+        c.number_format = cop_format
+    if "Ganancia Cointra" in consolidated_col_idx:
+        c = ws_quincena.cell(
+            row=current_row,
+            column=consolidated_col_idx["Ganancia Cointra"],
+            value=factura_total_cliente - factura_total_tercero,
+        )
+        c.number_format = cop_format
+    _style_row(ws_quincena, current_row, len(consolidated_headers), fill=section_fill, font=section_font)
+
+    additional_transport_items = [
+        item
+        for item in additional_items
+        if item.tipo == ItemTipo.VIAJE or _item_service_code_upper(item) in TRANSPORTE_SERVICE_CODES
+    ]
+
+    current_row = _write_report_header(ws_adicionales, "Adicionales")
+    current_row, _, additional_trip_total_cliente, additional_trip_total_tercero, additional_services_total_cliente, additional_services_total_tercero = _write_adicionales_unified_section(
+        ws_adicionales,
+        current_row,
+        "ADICIONALES",
+        additional_items,
+    )
+    current_row += 2
+
+    totals_headers = ["Concepto"]
+    if show_tarifa_cliente:
+        totals_headers.append("Valor Cliente")
+    if show_tarifa_tercero:
+        totals_headers.append("Valor Tercero")
+    if show_cointra_financials:
+        totals_headers.append("Ganancia Cointra")
+    totals_col_idx = _write_headers(ws_adicionales, current_row, totals_headers)
+    current_row += 1
+    totals_rows = [
+        ("FACTURA VIAJES", additional_trip_total_cliente, additional_trip_total_tercero),
+        ("FACTURA SERVICIOS", additional_services_total_cliente, additional_services_total_tercero),
+    ]
+    for label, total_cliente, total_tercero in totals_rows:
+        ws_adicionales.cell(row=current_row, column=totals_col_idx["Concepto"], value=label)
+        if "Valor Cliente" in totals_col_idx:
+            c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Valor Cliente"], value=total_cliente)
+            c.number_format = cop_format
+        if "Valor Tercero" in totals_col_idx:
+            c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Valor Tercero"], value=total_tercero)
+            c.number_format = cop_format
+        if "Ganancia Cointra" in totals_col_idx:
+            c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Ganancia Cointra"], value=total_cliente - total_tercero)
+            c.number_format = cop_format
+        _style_row(ws_adicionales, current_row, len(totals_headers), fill=section_fill, font=section_font)
+        current_row += 1
+
+    current_row += 1
+    total_adic_cliente = additional_trip_total_cliente + additional_services_total_cliente
+    total_adic_tercero = additional_trip_total_tercero + additional_services_total_tercero
+    ws_adicionales.cell(row=current_row, column=totals_col_idx["Concepto"], value="TOTAL ADICIONALES")
+    if "Valor Cliente" in totals_col_idx:
+        c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Valor Cliente"], value=total_adic_cliente)
+        c.number_format = cop_format
+    if "Valor Tercero" in totals_col_idx:
+        c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Valor Tercero"], value=total_adic_tercero)
+        c.number_format = cop_format
+    if "Ganancia Cointra" in totals_col_idx:
+        c = ws_adicionales.cell(row=current_row, column=totals_col_idx["Ganancia Cointra"], value=total_adic_cliente - total_adic_tercero)
+        c.number_format = cop_format
+    _style_row(ws_adicionales, current_row, len(totals_headers), fill=section_fill, font=section_font)
+
+    resumen_widths = {
+        "Placa": 16,
+        "Tipo Vehiculo": 22,
+        "Fecha": 16,
+        "Titulo Servicio": 28,
+        "Tipo Servicio": 24,
+        "Valor Cliente": 18,
+        "Valor Tercero": 18,
+        "Rentabilidad": 16,
+        "Ganancia Cointra": 20,
+        "Observaciones": 36,
+    }
+    quincena_widths = {
+        "Manifiesto": 18,
+        "Fecha Emision": 18,
+        "Placa Vehiculo": 16,
+        "Trayler": 16,
+        "Remesa": 18,
+        "Producto": 28,
+        "Ciudad Origen": 22,
+        "Ciudad Destino": 22,
+        "Valor Cliente": 18,
+        "Valor Tercero": 18,
+        "Rentabilidad": 16,
+        "Ganancia Cointra": 20,
+        "Placa": 16,
+        "Tipo Vehiculo": 22,
+        "Concepto": 24,
+    }
+    adicionales_widths = {**quincena_widths, **resumen_widths}
+
+    for sheet, widths in (
+        (ws_resumen, resumen_widths),
+        (ws_quincena, quincena_widths),
+        (ws_adicionales, adicionales_widths),
+    ):
+        min_column_width = 14
+        max_column = sheet.max_column
+        for col_idx in range(1, max_column + 1):
+            header_value = str(sheet.cell(row=1, column=col_idx).value or "")
+            best_width = widths.get(header_value, 18)
+            for row_idx in range(1, min(sheet.max_row, 12) + 1):
+                header_candidate = str(sheet.cell(row=row_idx, column=col_idx).value or "")
+                if header_candidate in widths:
+                    best_width = widths[header_candidate]
+                    break
+            sheet.column_dimensions[get_column_letter(col_idx)].width = max(best_width, min_column_width)
 
     output = BytesIO()
     wb.save(output)
@@ -1885,8 +2781,6 @@ def create_liquidacion_contrato_fijo(
                 liquidacion_id,
                 payload.periodo_inicio,
                 payload.periodo_fin,
-                es_relevo=False,
-                relevo_con_valor=None,
             ),
             created_by=user.id,
             cargado_por=user.rol.value,

@@ -101,8 +101,6 @@ export interface Item {
   liquidacion_contrato_fijo_id?: number | null;
   liquidacion_periodo_inicio?: string | null;
   liquidacion_periodo_fin?: string | null;
-  liquidacion_es_relevo?: boolean;
-  liquidacion_relevo_con_valor?: boolean | null;
   created_by: number;
   created_at: string;
 }
