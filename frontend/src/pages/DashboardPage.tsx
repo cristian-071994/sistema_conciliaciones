@@ -226,6 +226,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [serviciosPage, setServiciosPage] = useState(1);
   const [conciliacionesPage, setConciliacionesPage] = useState(1);
   const [filtrosTablaViajes, setFiltrosTablaViajes] = useState({
+    fecha_desde: "",
+    fecha_hasta: "",
     titulo: "",
     servicio: "",
     operacion: "",
@@ -445,6 +447,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   const CONCILIACIONES_PAGE_SIZE = 10;
   const totalConciliacionesPages = Math.max(1, Math.ceil(conciliacionesFiltradas.length / CONCILIACIONES_PAGE_SIZE));
+
+  const totalConciliacionesFiltradas = useMemo(() => {
+    let cliente = 0;
+    let tercero = 0;
+    for (const c of conciliacionesFiltradas) {
+      cliente += Number(c.valor_cliente ?? 0);
+      tercero += Number(c.valor_tercero ?? 0);
+    }
+    return { cliente, tercero, ganancia: cliente - tercero };
+  }, [conciliacionesFiltradas]);
   const conciliacionesPageSafe = Math.min(conciliacionesPage, totalConciliacionesPages);
   const conciliacionesPaginadas = useMemo(() => {
     const start = (conciliacionesPageSafe - 1) * CONCILIACIONES_PAGE_SIZE;
@@ -501,11 +513,23 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         includesFilter(v.placa, filtrosTablaViajes.placa) &&
         includesFilter(estadoVisible, filtrosTablaViajes.estado) &&
         includesFilter(activoLabel, filtrosTablaViajes.activo) &&
-        includesFilter(conciliacionLabel, filtrosTablaViajes.conciliacion)
+        includesFilter(conciliacionLabel, filtrosTablaViajes.conciliacion) &&
+        (!filtrosTablaViajes.fecha_desde || v.fecha_servicio >= filtrosTablaViajes.fecha_desde) &&
+        (!filtrosTablaViajes.fecha_hasta || v.fecha_servicio <= filtrosTablaViajes.fecha_hasta)
       );
     });
     return sortByFechaDesc(filtered);
   }, [viajes, filtroEstadoViaje, filtrosTablaViajes, operacionById, conciliacionById]);
+
+  const totalServiciosFiltrados = useMemo(() => {
+    let tercero = 0;
+    let cliente = 0;
+    for (const v of viajesFiltrados) {
+      tercero += v.tarifa_tercero ?? 0;
+      cliente += v.tarifa_cliente ?? 0;
+    }
+    return { tercero, cliente, ganancia: cliente - tercero };
+  }, [viajesFiltrados]);
 
   const totalServiciosPages = Math.max(1, Math.ceil(viajesFiltrados.length / SERVICIOS_PAGE_SIZE));
   const serviciosPageSafe = Math.min(serviciosPage, totalServiciosPages);
@@ -2137,7 +2161,29 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
             <section className="w-full rounded-2xl border border-border bg-white/90 p-5 shadow-sm outline-none">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-slate-900">Servicios cargados</h3>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h3 className="text-sm font-semibold text-slate-900">Servicios cargados</h3>
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Desde</label>
+                      <input
+                        type="date"
+                        value={filtrosTablaViajes.fecha_desde}
+                        onChange={(e) => setFiltrosTablaViajes((prev) => ({ ...prev, fecha_desde: e.target.value }))}
+                        className="rounded border border-border bg-white px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Hasta</label>
+                      <input
+                        type="date"
+                        value={filtrosTablaViajes.fecha_hasta}
+                        onChange={(e) => setFiltrosTablaViajes((prev) => ({ ...prev, fecha_hasta: e.target.value }))}
+                        className="rounded border border-border bg-white px-2 py-1 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
                 <div className="flex flex-1 items-center justify-end gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {[
@@ -2164,6 +2210,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     type="button"
                     onClick={() =>
                       setFiltrosTablaViajes({
+                        fecha_desde: "",
+                        fecha_hasta: "",
                         titulo: "",
                         servicio: "",
                         operacion: "",
@@ -2386,6 +2434,23 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-300 bg-slate-50 text-xs font-semibold">
+                      <td className="px-2 py-2" colSpan={2} />
+                      <td className="px-2 py-2 text-slate-600" colSpan={isCointraAdmin ? 7 : 6}>Totales ({viajesFiltrados.length} servicios)</td>
+                      <td className="px-2 py-2" />
+                      {user.rol !== "CLIENTE" && (
+                        <td className="px-2 py-2 whitespace-nowrap">{formatMoney(totalServiciosFiltrados.tercero)}</td>
+                      )}
+                      {user.rol !== "TERCERO" && (
+                        <td className="px-2 py-2 whitespace-nowrap">{formatMoney(totalServiciosFiltrados.cliente)}</td>
+                      )}
+                      {user.rol === "COINTRA" && (
+                        <td className="px-2 py-2 whitespace-nowrap">{formatMoney(totalServiciosFiltrados.ganancia)}</td>
+                      )}
+                      {isCointraAdmin && <td className="px-2 py-2" />}
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -2649,7 +2714,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   <tbody>
                     {conciliacionesPaginadas.map((c) => (
                       <tr key={c.id} className="border-b border-border last:border-0">
-                        <td className="px-3 py-2">{c.id}</td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => loadItems(c.id, true)}
+                            className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+                          >
+                            {c.id}
+                          </button>
+                        </td>
                         <td className="px-3 py-2">{c.nombre}</td>
                         <td className="px-3 py-2">{operacionById.get(c.operacion_id)?.nombre ?? `Operación #${c.operacion_id}`}</td>
                         <td className="px-3 py-2">{c.cliente_nombre ?? "-"}</td>
@@ -2710,6 +2783,21 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-300 bg-slate-50 text-xs font-semibold">
+                      <td className="px-3 py-2" colSpan={7}>Totales ({conciliacionesFiltradas.length} conciliaciones)</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {user.rol === "CLIENTE" && formatMoney(totalConciliacionesFiltradas.cliente)}
+                        {user.rol === "TERCERO" && formatMoney(totalConciliacionesFiltradas.tercero)}
+                        {user.rol === "COINTRA" && (
+                          <span>
+                            Cliente: {formatMoney(totalConciliacionesFiltradas.cliente)} | Tercero: {formatMoney(totalConciliacionesFiltradas.tercero)} | Ganancia: {formatMoney(totalConciliacionesFiltradas.ganancia)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2" colSpan={isCointraAdmin ? 4 : 3} />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
