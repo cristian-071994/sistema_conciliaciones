@@ -1326,7 +1326,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (!selected || selectedViajeIds.length === 0) return;
 
     if (selected.estado !== "BORRADOR") {
-      setError("Solo puedes adjuntar viajes cuando la conciliacion esta en BORRADOR");
+      setSaveResultModal({
+        title: "Acción no permitida",
+        description: "Solo puedes adjuntar viajes cuando la conciliación está en BORRADOR.",
+      });
       return;
     }
 
@@ -2093,8 +2096,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     >
                       <option value="">Seleccione...</option>
                       {serviciosActivos.map((servicio) => (
-                        <option key={servicio.id} value={servicio.id}>
-                          {servicio.nombre}
+                        <option
+                          key={servicio.id}
+                          value={servicio.id}
+                          disabled={servicio.codigo === "DISPONIBILIDAD"}
+                        >
+                          {servicio.nombre}{servicio.codigo === "DISPONIBILIDAD" ? " (auto-calculado)" : ""}
                         </option>
                       ))}
                     </select>
@@ -3162,6 +3169,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               </p>
             </div>
           </div>
+          <div className="mt-2 mb-1">
+            <h4 className="text-sm font-bold text-slate-800">Servicios Adicionales</h4>
+          </div>
           {((user.rol === "COINTRA" && selected.estado === "BORRADOR") || itemsLiquidacion.length > 0) && (
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3638,7 +3648,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     <td className="px-3 py-2">{item.destino || "-"}</td>
                                     <td className="px-3 py-2">{item.placa || "-"}</td>
                                     <td className="px-3 py-2">
-                                      {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
+                                      {isDisponibilidadItem(item) ? (
+                                        <span className="text-xs italic text-slate-400">N/A</span>
+                                      ) : user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
                                         editingManifiestoItemId === item.id ? (
                                           <div className="flex items-center gap-1">
                                             <input

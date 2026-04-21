@@ -911,6 +911,9 @@ def _build_conciliacion_excel_legacy(
         if liq_meta:
             liquidacion_items.append((item, liq_meta))
         else:
+            service_code = str(item.servicio_codigo or "").strip().upper()
+            if service_code == "DISPONIBILIDAD":
+                continue
             additional_items.append((item, None))
 
     estado_display = _display_estado(conc)
@@ -1467,6 +1470,8 @@ def _build_conciliacion_excel(
     for item in non_liquidacion_items:
         placa = str(item.placa or "").strip().upper()
         service_code = _item_service_code_upper(item)
+        if service_code == "DISPONIBILIDAD":
+            continue
         if has_liquidacion:
             if item.tipo == ItemTipo.VIAJE and service_code == "VIAJE" and placa in liquidacion_placas:
                 quincena_items.append(item)
