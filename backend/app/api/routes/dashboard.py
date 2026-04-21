@@ -332,6 +332,7 @@ def _build_empty_payload(mode: str, start: date, end: date, period_label: str, p
             "top_clientes": [],
             "top_terceros": [],
             "manifiestos_contexto": [],
+            "placa_desglose": [],
         },
     }
 
@@ -534,6 +535,8 @@ def dashboard_indicadores(
 
     top_placas = []
     for placa, values in items_summary["placa_totales"].items():
+        if placa.upper() in {"N/A", "N/D", ""}:
+            continue
         ingresos = float(values["ingresos"])
         costos = float(values["costos"])
         top_placas.append(
@@ -546,6 +549,70 @@ def dashboard_indicadores(
             }
         )
     top_placas.sort(key=lambda row: row["ganancia"], reverse=True)
+
+    # Matriz viajes vs disponibilidad por placa (tarifa_tercero para TERCERO/COINTRA, tarifa_cliente para CLIENTE)
+    placa_desglose_raw: dict[str, dict[str, float]] = defaultdict(lambda: {"viajes": 0.0, "disponibilidad": 0.0, "viajes_c": 0.0, "disponibilidad_c": 0.0})
+    if all_active_conc_ids:
+        desglose_rows = (
+            db.query(
+                ConciliacionItem.placa,
+                Servicio.codigo,
+                ConciliacionItem.tarifa_tercero,
+                ConciliacionItem.tarifa_cliente,
+                ConciliacionItem.tipo,
+                ConciliacionItem.descripcion,
+            )
+            .join(Conciliacion, Conciliacion.id == ConciliacionItem.conciliacion_id)
+            .outerjoin(Viaje, Viaje.id == ConciliacionItem.viaje_id)
+            .outerjoin(Servicio, Servicio.id == Viaje.servicio_id)
+            .filter(
+                Conciliacion.id.in_(all_active_conc_ids),
+                ConciliacionItem.fecha_servicio >= start,
+                ConciliacionItem.fecha_servicio <= end,
+                ConciliacionItem.placa.isnot(None),
+            )
+            .all()
+        )
+        for placa_raw, codigo_raw, tarifa_raw, tarifa_c_raw, tipo_raw, desc_raw in desglose_rows:
+            placa_str = str(placa_raw or "").strip().upper()
+            if not placa_str or placa_str in {"N/A", "N/D"}:
+                continue
+            if tipo_raw == ItemTipo.OTRO:
+                try:
+                    payload = json.loads((desc_raw or "").strip())
+                    if payload.get("kind") == "LIQUIDACION_CONTRATO_FIJO":
+                        continue
+                except Exception:
+                    pass
+            val = float(tarifa_raw or 0)
+            val_c = float(tarifa_c_raw or 0)
+            codigo_str = str(codigo_raw or "").strip().upper()
+            if codigo_str not in {"VIAJE", "DISPONIBILIDAD"}:
+                continue
+            if codigo_str == "DISPONIBILIDAD":
+                placa_desglose_raw[placa_str]["disponibilidad"] += val
+                placa_desglose_raw[placa_str]["disponibilidad_c"] += val_c
+            else:
+                placa_desglose_raw[placa_str]["viajes"] += val
+                placa_desglose_raw[placa_str]["viajes_c"] += val_c
+
+    placa_desglose = sorted(
+        [
+            {
+                "placa": placa,
+                "viajes": round(values["viajes"], 2),
+                "disponibilidad": round(values["disponibilidad"], 2),
+                "total": round(values["viajes"] + values["disponibilidad"], 2),
+                "viajes_cliente": round(values["viajes_c"], 2),
+                "disponibilidad_cliente": round(values["disponibilidad_c"], 2),
+                "total_cliente": round(values["viajes_c"] + values["disponibilidad_c"], 2),
+            }
+            for placa, values in placa_desglose_raw.items()
+            if values["viajes"] + values["disponibilidad"] > 0
+        ],
+        key=lambda row: row["total"],
+        reverse=True,
+    )
 
     top_clientes = []
     for nombre, values in cliente_totales.items():
@@ -651,5 +718,6 @@ def dashboard_indicadores(
             "top_placas": top_placas[:8],
             "top_clientes": top_clientes[:8],
             "top_terceros": top_terceros[:8],
+            "placa_desglose": placa_desglose,
         },
     }

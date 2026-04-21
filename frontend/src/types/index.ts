@@ -310,6 +310,16 @@ export interface DashboardTopOperacionEntry extends DashboardTopEntry {
   operacion_id: number;
 }
 
+export interface DashboardPlacaDesglose {
+  placa: string;
+  viajes: number;
+  disponibilidad: number;
+  total: number;
+  viajes_cliente: number;
+  disponibilidad_cliente: number;
+  total_cliente: number;
+}
+
 export interface DashboardIndicators {
   period: DashboardPeriod;
   kpis: DashboardKpis;
@@ -323,5 +333,6 @@ export interface DashboardIndicators {
     top_placas: DashboardTopEntry[];
     top_clientes: DashboardTopEntry[];
     top_terceros: DashboardTopEntry[];
+    placa_desglose: DashboardPlacaDesglose[];
   };
 }

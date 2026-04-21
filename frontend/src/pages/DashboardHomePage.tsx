@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "../services/api";
-import type { DashboardIndicators, DashboardLabelValue, User } from "../types";
+import type { DashboardIndicators, DashboardLabelValue, DashboardPlacaDesglose, User } from "../types";
 import { formatCOP } from "../utils/formatters";
 
 interface Props {
@@ -713,6 +713,75 @@ export function DashboardHomePage({ user }: Props) {
     );
   }
 
+  function PlacaDesgloseTable({ rows }: { rows: DashboardPlacaDesglose[] }) {
+    if (rows.length === 0) return null;
+    const useCliente = isCliente;
+    const viajesVal = (row: DashboardPlacaDesglose) => useCliente ? row.viajes_cliente : row.viajes;
+    const dispVal = (row: DashboardPlacaDesglose) => useCliente ? row.disponibilidad_cliente : row.disponibilidad;
+    const totalVal = (row: DashboardPlacaDesglose) => useCliente ? row.total_cliente : row.total;
+    const maxTotal = Math.max(...rows.map(totalVal), 1);
+    const hint = useCliente ? "Tarifa cliente · ordenado por mayor total" : "Costo tercero · ordenado por mayor total";
+    return (
+      <article className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
+        <div className="border-b border-border px-5 py-3">
+          <h3 className="text-sm font-bold text-slate-800">Viajes vs Disponibilidad por placa</h3>
+          <p className="mt-0.5 text-xs text-slate-500">{hint}</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2">Placa</th>
+                <th className="px-4 py-2 text-right">Viajes</th>
+                <th className="px-4 py-2 text-right">Disponibilidad</th>
+                <th className="px-4 py-2 text-right">Total</th>
+                <th className="px-4 py-2 w-36">Distribución</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row) => {
+                const v = viajesVal(row);
+                const d = dispVal(row);
+                const t = totalVal(row);
+                const viajesPct = t > 0 ? Math.round((v / t) * 100) : 0;
+                const dispPct = 100 - viajesPct;
+                return (
+                  <tr key={row.placa} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-2 font-semibold text-slate-800">{row.placa}</td>
+                    <td className="px-4 py-2 text-right text-sky-700">$ {formatCOP(v)}</td>
+                    <td className="px-4 py-2 text-right text-violet-700">$ {formatCOP(d)}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-900">$ {formatCOP(t)}</td>
+                    <td className="px-4 py-2">
+                      <div
+                        className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100"
+                        title={`Viajes ${viajesPct}% · Disponibilidad ${dispPct}%`}
+                      >
+                        <div className="h-full bg-sky-400" style={{ width: `${(v / maxTotal) * 100}%` }} />
+                        <div className="h-full bg-violet-400" style={{ width: `${(d / maxTotal) * 100}%` }} />
+                      </div>
+                      <div className="mt-1 flex gap-2 text-[10px]">
+                        {viajesPct > 0 && <span className="text-sky-600">{viajesPct}% V</span>}
+                        {d > 0 && <span className="text-violet-600">{dispPct}% D</span>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex gap-4 border-t border-border px-5 py-2 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-3 rounded-sm bg-sky-400" /> Viajes
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-3 rounded-sm bg-violet-400" /> Disponibilidad
+          </span>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <section className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-900 p-6 text-white shadow-lg">
@@ -929,6 +998,12 @@ export function DashboardHomePage({ user }: Props) {
               singleMetric={isCointra ? undefined : { label: roleMoneyLabel, field: roleMoneyField }}
             />
           </section>
+
+          {data.charts.placa_desglose.length > 0 && (
+            <section>
+              <PlacaDesgloseTable rows={data.charts.placa_desglose} />
+            </section>
+          )}
         </>
       )}
     </div>
