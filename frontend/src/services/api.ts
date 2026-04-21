@@ -282,6 +282,10 @@ export const api = {
     request<{ ok: boolean }>(`/conciliaciones/items/${itemId}`, {
       method: "DELETE",
     }),
+  eliminarDisponibilidad: (conciliacionId: number, itemId: number) =>
+    request<{ ok: boolean }>(`/conciliaciones/${conciliacionId}/disponibilidad/${itemId}`, {
+      method: "DELETE",
+    }),
   enviarRevisionConciliacion: (
     conciliacionId: number,
     payload: { observacion?: string; destinatario_email?: string; mensaje?: string }

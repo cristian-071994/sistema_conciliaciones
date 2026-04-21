@@ -706,7 +706,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       items.filter((item) => {
         if (item.liquidacion_contrato_fijo) return false;
         const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
-        if (codigo !== "VIAJE") return false;
+        if (codigo !== "VIAJE" && codigo !== "DISPONIBILIDAD") return false;
         if (itemsLiquidacion.length > 0) {
           const itemPlaca = String(item.placa || "").trim().toUpperCase();
           return liquidacionPlacas.has(itemPlaca);
@@ -720,12 +720,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       items.filter((item) => {
         if (item.liquidacion_contrato_fijo) return false;
         const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
-        if (codigo !== "VIAJE") return true;
-        if (itemsLiquidacion.length > 0) {
-          const itemPlaca = String(item.placa || "").trim().toUpperCase();
-          return !liquidacionPlacas.has(itemPlaca);
+        if (codigo === "VIAJE" || codigo === "DISPONIBILIDAD") {
+          if (itemsLiquidacion.length > 0) {
+            const itemPlaca = String(item.placa || "").trim().toUpperCase();
+            return !liquidacionPlacas.has(itemPlaca);
+          }
+          return false;
         }
-        return false;
+        return true;
       }),
     [items, itemsLiquidacion, liquidacionPlacas]
   );
@@ -830,7 +832,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   const disponibilidadCalculada = useMemo(() => {
     const map = new Map<string, number>();
-    const dispItems = itemsConciliacion.filter((item) => {
+    const dispItems = itemsViajeBajoLiquidacion.filter((item) => {
       const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
       const nombre = String(item.servicio_nombre || "").trim().toLowerCase();
       return codigo === "DISPONIBILIDAD" || nombre === "disponibilidad";
@@ -843,13 +845,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       );
       if (!liquidacion) continue;
       const sumaViajes = itemsViajeBajoLiquidacion
-        .filter((i) => String(i.placa || "").trim().toUpperCase() === placa)
+        .filter((i) => {
+          if (String(i.placa || "").trim().toUpperCase() !== placa) return false;
+          const cod = String(i.servicio_codigo || "").trim().toUpperCase();
+          const nom = String(i.servicio_nombre || "").trim().toLowerCase();
+          return cod !== "DISPONIBILIDAD" && nom !== "disponibilidad";
+        })
         .reduce((sum, i) => sum + (i.tarifa_tercero ?? 0), 0);
       const diferencia = Math.max(0, Math.round(((liquidacion.tarifa_tercero ?? 0) - sumaViajes) * 100) / 100);
       map.set(placa, diferencia);
     }
     return map;
-  }, [itemsConciliacion, itemsLiquidacion, itemsViajeBajoLiquidacion]);
+  }, [itemsViajeBajoLiquidacion, itemsLiquidacion]);
 
   const itemsClienteRevision = useMemo(
     () => items,
@@ -907,6 +914,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
   function isHoraExtraItem(item: Item): boolean {
     return item.servicio_codigo === "HORA_EXTRA" || item.tipo === "HORA_EXTRA";
+  }
+
+  function getViajeServicioLabel(viaje: Viaje): string {
+    if (viaje.servicio_codigo?.trim()) return viaje.servicio_codigo.replace(/_/g, " ");
+    if (viaje.servicio_nombre?.trim()) return viaje.servicio_nombre;
+    return "VIAJE";
   }
 
   function isTransportServiceItem(item: Item): boolean {
@@ -1377,6 +1390,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     const valorTerceroNum = Number(valor_tercero || 0);
     if (!Number.isFinite(valorTerceroNum) || valorTerceroNum <= 0) {
       setError("Debes ingresar un valor tercero válido mayor a cero.");
+      return;
+    }
+
+    // Validar placa no duplicada en este bloque
+    const placaNormCheck = placa.trim().toUpperCase();
+    const placaYaExiste = itemsLiquidacion.some(
+      (item) => String(item.placa || "").trim().toUpperCase() === placaNormCheck
+    );
+    if (placaYaExiste) {
+      setError(`Ya existe un registro de Liquidación Contrato Fijo para la placa ${placaNormCheck}.`);
       return;
     }
 
@@ -1899,7 +1922,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (disponibilidadCalculada.size === 0) return;
     if (isAutoPatching.current) return;
 
-    const dispItems = itemsConciliacion.filter((item) => {
+    const dispItems = itemsViajeBajoLiquidacion.filter((item) => {
       const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
       const nombre = String(item.servicio_nombre || "").trim().toLowerCase();
       return codigo === "DISPONIBILIDAD" || nombre === "disponibilidad";
@@ -1919,8 +1942,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         for (const dispItem of toUpdate) {
           const placa = String(dispItem.placa || "").trim().toUpperCase();
           const newTarifa = disponibilidadCalculada.get(placa)!;
-          const updated = await api.patchConciliacionItem(dispItem.id, { tarifa_tercero: newTarifa });
-          setItems((prev) => prev.map((i) => (i.id === dispItem.id ? updated : i)));
+          if (newTarifa <= 0) {
+            // La suma de viajes cubre o supera el contrato fijo: eliminar disponibilidad
+            await api.eliminarDisponibilidad(dispItem.conciliacion_id, dispItem.id);
+            setItems((prev) => prev.filter((i) => i.id !== dispItem.id));
+          } else {
+            const updated = await api.patchConciliacionItem(dispItem.id, { tarifa_tercero: newTarifa });
+            setItems((prev) => prev.map((i) => (i.id === dispItem.id ? updated : i)));
+          }
         }
         await onRefreshConciliaciones();
       } finally {
@@ -3028,7 +3057,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       <th className="border-b border-border px-3 py-2 text-left">ID</th>
                       <th className="border-b border-border px-3 py-2 text-left">Título servicio</th>
                       <th className="border-b border-border px-3 py-2 text-left">Operación</th>
-                      <th className="border-b border-border px-3 py-2 text-left">Tipo servicio</th>
+                      <th className="border-b border-border px-3 py-2 text-left">Servicio</th>
                       <th className="border-b border-border px-3 py-2 text-left">Fecha</th>
                       <th className="border-b border-border px-3 py-2 text-left">Ruta</th>
                       <th className="border-b border-border px-3 py-2 text-left">Placa</th>
@@ -3055,7 +3084,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{v.id}</td>
                         <td className="px-3 py-2">{v.titulo || "-"}</td>
                         <td className="px-3 py-2">{selectedOperacion?.nombre ?? `Operación #${selected.operacion_id}`}</td>
-                        <td className="px-3 py-2">{v.servicio_nombre || v.servicio_codigo || "-"}</td>
+                        <td className="px-3 py-2 font-medium">{getViajeServicioLabel(v)}</td>
                         <td className="px-3 py-2">{v.fecha_servicio}</td>
                         <td className="px-3 py-2">
                           {v.origen} - {v.destino}
@@ -3642,20 +3671,29 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     {user.rol !== "CLIENTE" && (
                                       <td className="px-3 py-2">
                                         {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                                          <EditableCell
-                                            initialValue={String(item.tarifa_tercero ?? "")}
-                                            type="number"
-                                            onSave={async (val) => {
-                                              await patchItemAndSync(item.id, { tarifa_tercero: Number(val) });
-                                            }}
-                                            placeholder="0"
-                                            helperText={
-                                              item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
-                                                ? `Actual: ${formatMoney(item.tarifa_tercero)}`
-                                                : "Actual: -"
-                                            }
-                                            className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                                          />
+                                          isDisponibilidadItem(item) ? (
+                                            <span className="flex flex-col gap-0.5">
+                                              <span className="text-sm text-slate-700">
+                                                {formatMoney(disponibilidadCalculada.get(String(item.placa || "").trim().toUpperCase()) ?? item.tarifa_tercero)}
+                                              </span>
+                                              <span className="text-[11px] text-neutral">Auto-calculado</span>
+                                            </span>
+                                          ) : (
+                                            <EditableCell
+                                              initialValue={String(item.tarifa_tercero ?? "")}
+                                              type="number"
+                                              onSave={async (val) => {
+                                                await patchItemAndSync(item.id, { tarifa_tercero: Number(val) });
+                                              }}
+                                              placeholder="0"
+                                              helperText={
+                                                item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
+                                                  ? `Actual: ${formatMoney(item.tarifa_tercero)}`
+                                                  : "Actual: -"
+                                              }
+                                              className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                            />
+                                          )
                                         ) : (
                                           formatMoney(item.tarifa_tercero)
                                         )}
@@ -3664,20 +3702,24 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     {user.rol !== "TERCERO" && (
                                       <td className="px-3 py-2">
                                         {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                                          <EditableCell
-                                            initialValue={String(item.tarifa_cliente ?? "")}
-                                            type="number"
-                                            onSave={async (val) => {
-                                              await patchItemAndSync(item.id, { tarifa_cliente: Number(val) });
-                                            }}
-                                            placeholder="0"
-                                            helperText={
-                                              item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
-                                                ? `Actual: ${formatMoney(item.tarifa_cliente)}`
-                                                : "Actual: -"
-                                            }
-                                            className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                                          />
+                                          isDisponibilidadItem(item) ? (
+                                            <span className="text-sm text-slate-700">{formatMoney(item.tarifa_cliente)}</span>
+                                          ) : (
+                                            <EditableCell
+                                              initialValue={String(item.tarifa_cliente ?? "")}
+                                              type="number"
+                                              onSave={async (val) => {
+                                                await patchItemAndSync(item.id, { tarifa_cliente: Number(val) });
+                                              }}
+                                              placeholder="0"
+                                              helperText={
+                                                item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
+                                                  ? `Actual: ${formatMoney(item.tarifa_cliente)}`
+                                                  : "Actual: -"
+                                              }
+                                              className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                            />
+                                          )
                                         ) : (
                                           formatMoney(item.tarifa_cliente)
                                         )}

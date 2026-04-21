@@ -22,6 +22,7 @@ from app.models.historial_cambio import HistorialCambio
 from app.models.operacion import Operacion
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
+from app.models.servicio import Servicio
 from app.models.vehiculo import Vehiculo
 from app.models.viaje import Viaje
 from app.schemas.historial import HistorialCambioOut, ResumenFinancieroOut
@@ -2830,6 +2831,27 @@ def create_liquidacion_contrato_fijo(
             ),
         )
 
+    # Impedir duplicados: una placa solo puede tener un registro de liquidacion por conciliacion.
+    existing_liq_items = (
+        db.query(ConciliacionItem)
+        .filter(ConciliacionItem.conciliacion_id == conc.id)
+        .all()
+    )
+    existing_liq_placas = {
+        str(i.placa or "").strip().upper()
+        for i in existing_liq_items
+        if _extract_liquidacion_metadata(i)
+    }
+    duplicadas = [p for p in placas_norm if p in existing_liq_placas]
+    if duplicadas:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Ya existe un registro de liquidacion contrato fijo para la(s) placa(s): "
+                + ", ".join(duplicadas)
+            ),
+        )
+
     created_rows: list[ConciliacionItem] = []
     for placa in placas_norm:
         tarifa_tercero = float(payload.valor_tercero)
@@ -2928,7 +2950,115 @@ def delete_liquidacion_item(
         {HistorialCambio.item_id: None},
         synchronize_session=False,
     )
+
+    # Buscar y eliminar el item de Disponibilidad de la misma placa en esta conciliacion
+    placa_norm = str(item.placa or "").strip().upper()
+    if placa_norm:
+        disp_items = (
+            db.query(ConciliacionItem)
+            .filter(
+                ConciliacionItem.conciliacion_id == conc.id,
+                ConciliacionItem.id != item.id,
+            )
+            .all()
+        )
+        for d_item in disp_items:
+            if str(d_item.placa or "").strip().upper() != placa_norm:
+                continue
+            if not d_item.viaje_id:
+                continue
+            viaje = db.get(Viaje, d_item.viaje_id)
+            if not viaje:
+                continue
+            servicio = db.get(Servicio, viaje.servicio_id) if viaje.servicio_id else None
+            es_disp = (
+                servicio and (
+                    str(servicio.codigo or "").strip().upper() == "DISPONIBILIDAD"
+                    or str(servicio.nombre or "").strip().lower() == "disponibilidad"
+                )
+            ) or "disponibilidad" in str(viaje.titulo or "").lower()
+            if not es_disp:
+                continue
+            db.query(HistorialCambio).filter(HistorialCambio.item_id == d_item.id).update(
+                {HistorialCambio.item_id: None}, synchronize_session=False
+            )
+            db.delete(d_item)
+            viaje.conciliacion_id = None
+            viaje.estado_conciliacion = None
+            viaje.activo = False
+
     db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{conciliacion_id}/disponibilidad/{item_id}")
+def delete_disponibilidad_item(
+    conciliacion_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Elimina un item de servicio Disponibilidad (auto-creado) y desactiva el viaje subyacente."""
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede eliminar items de disponibilidad")
+
+    conc = db.get(Conciliacion, conciliacion_id)
+    if not conc:
+        raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
+
+    if conc.estado != "BORRADOR":
+        raise HTTPException(status_code=400, detail="Solo en BORRADOR se pueden eliminar items de disponibilidad")
+
+    operacion = db.get(Operacion, conc.operacion_id)
+    _validate_user_access_operacion(user, operacion)
+
+    item = db.get(ConciliacionItem, item_id)
+    if not item or item.conciliacion_id != conciliacion_id:
+        raise HTTPException(status_code=404, detail="Item no encontrado en esta conciliacion")
+
+    if not item.viaje_id:
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar items de servicio Disponibilidad")
+
+    viaje = db.get(Viaje, item.viaje_id)
+    if not viaje:
+        raise HTTPException(status_code=404, detail="Viaje subyacente no encontrado")
+
+    servicio = db.get(Servicio, viaje.servicio_id) if viaje.servicio_id else None
+    es_disponibilidad = (
+        servicio and (
+            str(servicio.codigo or "").strip().upper() == "DISPONIBILIDAD"
+            or str(servicio.nombre or "").strip().lower() == "disponibilidad"
+        )
+    ) or "disponibilidad" in str(viaje.titulo or "").lower()
+
+    if not es_disponibilidad:
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden eliminar items de servicio Disponibilidad creados automaticamente",
+        )
+
+    log_change(
+        db,
+        usuario_id=user.id,
+        conciliacion_id=conciliacion_id,
+        campo="disponibilidad_eliminada",
+        valor_anterior=f"item_id={item.id}; viaje_id={viaje.id}; placa={item.placa}; t3={item.tarifa_tercero}",
+    )
+
+    # Limpiar FK del historial antes de borrar el item
+    db.query(HistorialCambio).filter(HistorialCambio.item_id == item.id).update(
+        {HistorialCambio.item_id: None}, synchronize_session=False
+    )
+    db.delete(item)
+
+    # Desactivar el viaje auto-creado
+    viaje.conciliacion_id = None
+    viaje.estado_conciliacion = None
+    viaje.conciliado = False
+    viaje.activo = False
+
+    _mark_borrador_dirty(conc)
     db.commit()
     return {"ok": True}
 
@@ -3830,7 +3960,11 @@ def get_pending_viajes(
 
     viajes = (
         db.query(Viaje)
-        .filter(Viaje.operacion_id == conc.operacion_id, Viaje.conciliacion_id.is_(None))
+        .filter(
+            Viaje.operacion_id == conc.operacion_id,
+            Viaje.conciliacion_id.is_(None),
+            Viaje.activo.is_(True),
+        )
         .order_by(Viaje.fecha_servicio.asc(), Viaje.id.asc())
         .all()
     )
@@ -3842,6 +3976,9 @@ def get_pending_viajes(
     for viaje in viajes:
         out = ViajeOut.model_validate(viaje).model_dump()
         out["estado_conciliacion"] = _estado_conciliacion_viaje(viaje)
+        if viaje.servicio:
+            out["servicio_nombre"] = viaje.servicio.nombre
+            out["servicio_codigo"] = viaje.servicio.codigo
         payload.append(out)
 
     return payload
