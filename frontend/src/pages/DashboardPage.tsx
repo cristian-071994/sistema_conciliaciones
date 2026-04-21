@@ -3111,7 +3111,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 <img src={excelLogo} alt="Excel" className="h-5 w-5" />
                 Descargar
               </button>
-              {selected.factura_cliente_enviada && (
+              {selected.factura_cliente_enviada && user.rol !== "TERCERO" && (
                 <button
                   type="button"
                   onClick={() => void descargarFacturasConciliacion()}

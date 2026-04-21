@@ -1,0 +1,193 @@
+PROPUESTA BASE DOCKER PARA SERVIDOR
+Fecha: 2026-04-21
+
+Objetivo
+- Levantar el sistema con 3 servicios: db (PostgreSQL), backend (FastAPI), frontend (Nginx + build Vite).
+- Mantener separacion clara de configuracion por entorno (staging/produccion).
+
+Estructura recomendada (archivos Docker)
+- docker-compose.yml
+- .env.docker
+- backend/Dockerfile
+- backend/.dockerignore
+- frontend/Dockerfile
+- frontend/nginx.conf
+- frontend/.dockerignore
+
+Variables criticas
+1) Backend
+- DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/sistema_conciliacion
+- APP_ENV=production
+- SECRET_KEY=<definir_en_servidor>
+- ACCESS_TOKEN_EXPIRE_MINUTES=120
+
+2) DB
+- POSTGRES_DB=sistema_conciliacion
+- POSTGRES_USER=postgres
+- POSTGRES_PASSWORD=<definir_en_servidor>
+
+3) Frontend
+- VITE_API_URL=/api
+
+Notas:
+- En produccion es mejor que Nginx del frontend haga proxy /api -> backend:8000.
+- Si usas dominio y reverse proxy global (Traefik/Nginx externo), puedes dejar frontend estatico y enrutar /api afuera.
+
+Ejemplo docker-compose.yml (base)
+------------------------------------------------------------
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: sc_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sc_backend
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: sc_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  db_data:
+------------------------------------------------------------
+
+backend/Dockerfile (base)
+------------------------------------------------------------
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+------------------------------------------------------------
+
+frontend/Dockerfile (build + nginx)
+------------------------------------------------------------
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+RUN npm run build
+
+FROM nginx:alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+------------------------------------------------------------
+
+frontend/nginx.conf (SPA + proxy api)
+------------------------------------------------------------
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location / {
+    try_files $uri /index.html;
+  }
+
+  location /api/ {
+    proxy_pass http://backend:8000/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+------------------------------------------------------------
+
+.env.docker (plantilla)
+------------------------------------------------------------
+POSTGRES_DB=sistema_conciliacion
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=CAMBIAR_ESTA_CLAVE
+
+DATABASE_URL=postgresql+psycopg://postgres:CAMBIAR_ESTA_CLAVE@db:5432/sistema_conciliacion
+APP_ENV=production
+SECRET_KEY=CAMBIAR_SECRET_KEY_MUY_LARGA
+ACCESS_TOKEN_EXPIRE_MINUTES=120
+
+SMTP_ENABLED=false
+------------------------------------------------------------
+
+Comandos de despliegue
+1) Build y arranque
+- docker compose --env-file .env.docker up -d --build
+
+2) Ver logs
+- docker compose logs -f backend
+- docker compose logs -f frontend
+
+3) Actualizar version
+- git pull
+- docker compose --env-file .env.docker up -d --build
+
+4) Backup rapido DB
+- docker exec -t sc_db pg_dump -U postgres -d sistema_conciliacion > backup.sql
+
+Checklist antes de produccion
+- Definir SECRET_KEY y passwords reales.
+- Configurar SMTP real si se requiere correo.
+- Poner dominio + HTTPS (Nginx externo o reverse proxy con TLS).
+- Probar login, conciliaciones, carga de archivos, descarga Excel/PDF.
+- Validar migraciones alembic en entorno limpio.
+
+Siguiente paso sugerido
+- Si quieres, te genero directamente estos archivos en el repo listos para ejecutar docker compose en servidor.

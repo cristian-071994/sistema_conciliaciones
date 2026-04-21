@@ -3785,6 +3785,9 @@ def descargar_facturas_conciliacion(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
+    if user.rol == UserRole.TERCERO:
+        raise HTTPException(status_code=403, detail="No autorizado para descargar facturas")
+
     conc = db.get(Conciliacion, conciliacion_id)
     if not conc:
         raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
