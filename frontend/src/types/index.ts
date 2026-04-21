@@ -289,6 +289,13 @@ export interface DashboardLabelValue {
   value: number;
 }
 
+export interface DashboardCostoPorTipo {
+  label: string;
+  ingreso: number;
+  costo: number;
+  ganancia: number;
+}
+
 export interface DashboardSeriePoint {
   label: string;
   date: string;
@@ -327,7 +334,7 @@ export interface DashboardIndicators {
     conciliaciones_estado: DashboardLabelValue[];
     items_estado: DashboardLabelValue[];
     items_tipo: DashboardLabelValue[];
-    costo_por_tipo: DashboardLabelValue[];
+    costo_por_tipo: DashboardCostoPorTipo[];
     serie: DashboardSeriePoint[];
     top_operaciones: DashboardTopOperacionEntry[];
     top_placas: DashboardTopEntry[];

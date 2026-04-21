@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "../services/api";
-import type { DashboardIndicators, DashboardLabelValue, DashboardPlacaDesglose, User } from "../types";
+import type { DashboardCostoPorTipo, DashboardIndicators, DashboardLabelValue, DashboardPeriod, DashboardPlacaDesglose, User, Viaje } from "../types";
 import { formatCOP } from "../utils/formatters";
 
 interface Props {
@@ -18,6 +18,7 @@ export function DashboardHomePage({ user }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [data, setData] = useState<DashboardIndicators | null>(null);
+  const [drillDown, setDrillDown] = useState<{ type: string; title: string } | null>(null);
 
   const yearOptions = useMemo(() => {
     const base = today.getFullYear();
@@ -189,6 +190,76 @@ export function DashboardHomePage({ user }: Props) {
               </div>
             </div>
           ))}
+        </div>
+      </article>
+    );
+  }
+
+  function CostoPorTipoList({ rows }: { rows: DashboardCostoPorTipo[] }) {
+    if (rows.length === 0) {
+      return (
+        <article className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900">Valor por tipo de servicio</h3>
+          <p className="mt-3 text-xs text-neutral">Sin datos para este período.</p>
+        </article>
+      );
+    }
+    if (isCointra) {
+      return (
+        <article className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900">Valor por tipo de servicio</h3>
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-border text-left text-neutral">
+                  <th className="px-2 py-2">Servicio</th>
+                  <th className="px-2 py-2 text-right">Ingreso (cliente)</th>
+                  <th className="px-2 py-2 text-right">Costo (tercero)</th>
+                  <th className="px-2 py-2 text-right">Ganancia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.label} className="border-b border-border/60 last:border-0">
+                    <td className="px-2 py-2 font-semibold text-slate-800">{row.label}</td>
+                    <td className="px-2 py-2 text-right text-emerald-700">{formatCurrency(row.ingreso)}</td>
+                    <td className="px-2 py-2 text-right text-sky-700">{formatCurrency(row.costo)}</td>
+                    <td className={`px-2 py-2 text-right font-semibold ${row.ganancia >= 0 ? "text-teal-700" : "text-rose-600"}`}>{formatCurrency(row.ganancia)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      );
+    }
+    const metricValue = (row: DashboardCostoPorTipo) => (isCliente ? row.ingreso : row.costo);
+    const metricLabel = isCliente ? "Ingreso (tarifa cliente)" : "Costo (tarifa tercero)";
+    const maxVal = Math.max(...rows.map(metricValue), 1);
+    return (
+      <article className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-900">Valor por tipo de servicio</h3>
+          <span className="text-[11px] text-neutral">{metricLabel}</span>
+        </div>
+        <div className="mt-3 space-y-2">
+          {rows.map((row) => {
+            const val = metricValue(row);
+            return (
+              <div key={row.label} title={`${row.label}: ${formatCurrency(val)}`}>
+                <div className="mb-1 flex items-center justify-between text-xs text-slate-700">
+                  <span>{row.label}</span>
+                  <span className="font-semibold">{formatCurrency(val)}</span>
+                </div>
+                <div className="h-2.5 rounded-full bg-slate-100">
+                  <div
+                    className="h-2.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600"
+                    style={{ width: `${val <= 0 ? 0 : Math.max(6, (val / maxVal) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </article>
     );
@@ -887,25 +958,25 @@ export function DashboardHomePage({ user }: Props) {
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             {isCointra ? (
               <>
-                <StatCard title="Ingresos" value={formatCurrency(data.kpis.ingresos)} hint="Tarifa cliente acumulada" />
-                <StatCard title="Costos" value={formatCurrency(data.kpis.costos)} hint="Tarifa tercero acumulada" />
-                <StatCard title="Ganancia" value={formatCurrency(data.kpis.ganancia)} hint={`Margen ${oneDecimal(data.kpis.margen_pct)}%`} />
-                <StatCard title="Servicios" value={String(data.kpis.servicios)} hint={`Ticket medio ${formatCurrency(data.kpis.ticket_promedio)}`} />
+                <StatCard title="Ingresos" value={formatCurrency(data.kpis.ingresos)} hint="Tarifa cliente acumulada" onClick={() => setDrillDown({ type: "ingresos", title: "Ingresos — detalle de servicios" })} />
+                <StatCard title="Costos" value={formatCurrency(data.kpis.costos)} hint="Tarifa tercero acumulada" onClick={() => setDrillDown({ type: "costos", title: "Costos — detalle de servicios" })} />
+                <StatCard title="Ganancia" value={formatCurrency(data.kpis.ganancia)} hint={`Margen ${oneDecimal(data.kpis.margen_pct)}%`} onClick={() => setDrillDown({ type: "ganancia", title: "Ganancia — detalle de servicios" })} />
+                <StatCard title="Servicios" value={String(data.kpis.servicios)} hint={`Ticket medio ${formatCurrency(data.kpis.ticket_promedio)}`} onClick={() => setDrillDown({ type: "servicios", title: "Todos los servicios del período" })} />
                 <StatCard
                   title="Conciliaciones"
                   value={String(data.kpis.conciliaciones)}
                   hint="Total del período"
                   highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
                 />
-                <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" />
-                <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" />
+                <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" onClick={() => setDrillDown({ type: "manifiestos", title: "Servicios con manifiesto" })} />
+                <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" onClick={() => setDrillDown({ type: "placas", title: "Servicios con placa activa" })} />
                 <StatCard
                   title="Variación ganancia"
                   value={`${data.kpis.variacion_ganancia_pct > 0 ? "+" : ""}${oneDecimal(data.kpis.variacion_ganancia_pct)}%`}
                   hint="Comparado con período anterior equivalente"
                 />
-                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} />
-                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} />
+                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} onClick={() => setDrillDown({ type: "pendiente", title: "Servicios pendientes" })} />
+                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} onClick={() => setDrillDown({ type: "en_revision", title: "Servicios en revisión" })} />
               </>
             ) : (
               <>
@@ -913,25 +984,26 @@ export function DashboardHomePage({ user }: Props) {
                   title={roleMoneyTitle}
                   value={formatCurrency(roleMoneyField === "ingresos" ? data.kpis.ingresos : data.kpis.costos)}
                   hint={isCliente ? "Tarifa cliente acumulada" : "Tarifa tercero acumulada"}
+                  onClick={() => setDrillDown({ type: roleMoneyField === "ingresos" ? "ingresos" : "costos", title: `${roleMoneyTitle} — detalle de servicios` })}
                 />
-                <StatCard title="Servicios" value={String(data.kpis.servicios)} />
+                <StatCard title="Servicios" value={String(data.kpis.servicios)} onClick={() => setDrillDown({ type: "servicios", title: "Todos los servicios del período" })} />
                 <StatCard
                   title="Conciliaciones"
                   value={String(data.kpis.conciliaciones)}
                   hint="Total del período"
                   highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
                 />
-                <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" />
-                <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" />
-                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} />
-                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} />
-                <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} />
+                <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" onClick={() => setDrillDown({ type: "manifiestos", title: "Servicios con manifiesto" })} />
+                <StatCard title="Placas activas" value={String(data.kpis.placas_activas)} hint="Vehículos con movimiento" onClick={() => setDrillDown({ type: "placas", title: "Servicios con placa activa" })} />
+                <StatCard title="Servicios pendientes" value={String(data.kpis.viajes_pendientes)} onClick={() => setDrillDown({ type: "pendiente", title: "Servicios pendientes" })} />
+                <StatCard title="Servicios en revisión" value={String(data.kpis.viajes_en_revision)} onClick={() => setDrillDown({ type: "en_revision", title: "Servicios en revisión" })} />
+                <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} onClick={() => setDrillDown({ type: "conciliados", title: "Servicios conciliados" })} />
               </>
             )}
           </section>
 
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            {isCointra && <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} />}
+            {isCointra && <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} onClick={() => setDrillDown({ type: "conciliados", title: "Servicios conciliados" })} />}
             <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />
@@ -956,7 +1028,7 @@ export function DashboardHomePage({ user }: Props) {
           <section className="grid gap-4 lg:grid-cols-3">
             <BarList title="Servicios por tipo" rows={data.charts.items_tipo} />
             <BarList title="Items por estado" rows={data.charts.items_estado} />
-            <BarList title="Costo por tipo de servicio" rows={data.charts.costo_por_tipo} />
+            <CostoPorTipoList rows={data.charts.costo_por_tipo} />
           </section>
 
           <section className="grid gap-4 lg:grid-cols-2">
@@ -1006,6 +1078,188 @@ export function DashboardHomePage({ user }: Props) {
           )}
         </>
       )}
+      {drillDown && data && (
+        <KpiDrillDownModal
+          drillDown={drillDown}
+          period={data.period}
+          isCointra={isCointra}
+          isCliente={isCliente}
+          isTercero={isTercero}
+          onClose={() => setDrillDown(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function KpiDrillDownModal({
+  drillDown,
+  period,
+  isCointra,
+  isCliente,
+  isTercero,
+  onClose,
+}: {
+  drillDown: { type: string; title: string };
+  period: DashboardPeriod;
+  isCointra: boolean;
+  isCliente: boolean;
+  isTercero: boolean;
+  onClose: () => void;
+}) {
+  function fmt(v: number) {
+    return `$ ${formatCOP(v)}`;
+  }
+  const [modalViajes, setModalViajes] = useState<Viaje[]>([]);
+  const [modalLoading, setModalLoading] = useState(true);
+
+  useEffect(() => {
+    setModalLoading(true);
+    void api
+      .viajes(undefined, false, period.start_date, period.end_date)
+      .then(setModalViajes)
+      .catch(() => {})
+      .finally(() => setModalLoading(false));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    const rows = (() => {
+      switch (drillDown.type) {
+        case "pendiente":
+          return modalViajes.filter((v) => !v.estado_conciliacion);
+        case "en_revision":
+          return modalViajes.filter(
+            (v) =>
+              !!v.estado_conciliacion &&
+              !v.conciliado &&
+              v.estado_conciliacion !== "APROBADA" &&
+              v.estado_conciliacion !== "CERRADA",
+          );
+        case "conciliados":
+          return modalViajes.filter(
+            (v) => v.conciliado || v.estado_conciliacion === "APROBADA" || v.estado_conciliacion === "CERRADA",
+          );
+        case "manifiestos":
+          return modalViajes.filter((v) => !!v.manifiesto_numero);
+        default:
+          return modalViajes;
+      }
+    })();
+    const sorted = [...rows];
+    if (drillDown.type === "ingresos") sorted.sort((a, b) => (b.tarifa_cliente ?? 0) - (a.tarifa_cliente ?? 0));
+    else if (drillDown.type === "costos") sorted.sort((a, b) => (b.tarifa_tercero ?? 0) - (a.tarifa_tercero ?? 0));
+    else if (drillDown.type === "ganancia")
+      sorted.sort(
+        (a, b) =>
+          (b.tarifa_cliente ?? 0) - (b.tarifa_tercero ?? 0) - ((a.tarifa_cliente ?? 0) - (a.tarifa_tercero ?? 0)),
+      );
+    else sorted.sort((a, b) => (a.fecha_servicio < b.fecha_servicio ? 1 : -1));
+    return sorted;
+  }, [modalViajes, drillDown.type]);
+
+  const showIngreso = isCointra || isCliente;
+  const showCosto = isCointra || isTercero;
+  const isManifiestos = drillDown.type === "manifiestos";
+  const baseCols = 5 + (isManifiestos ? 1 : 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">{drillDown.title}</h2>
+            <p className="text-xs text-neutral">{period.label}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-neutral hover:bg-slate-100">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="overflow-auto px-5 py-4">
+          {modalLoading ? (
+            <div className="flex items-center justify-center py-12 text-sm text-neutral">Cargando...</div>
+          ) : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-neutral">Sin servicios para este criterio en el período.</p>
+          ) : (
+            <table className="min-w-full border-collapse text-xs">
+              <thead className="sticky top-0 bg-white">
+                <tr className="border-b border-border text-left text-neutral">
+                  <th className="px-2 py-2">#</th>
+                  <th className="px-2 py-2">Fecha</th>
+                  <th className="px-2 py-2">Placa</th>
+                  <th className="px-2 py-2">Servicio</th>
+                  <th className="px-2 py-2">Ruta / Título</th>
+                  {isManifiestos && <th className="px-2 py-2">Manifiesto</th>}
+                  {showIngreso && <th className="px-2 py-2 text-right">Ingreso (cliente)</th>}
+                  {showCosto && <th className="px-2 py-2 text-right">Costo (tercero)</th>}
+                  {isCointra && <th className="px-2 py-2 text-right">Ganancia</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((v) => {
+                  const ganancia = (v.tarifa_cliente ?? 0) - (v.tarifa_tercero ?? 0);
+                  const ruta = v.origen && v.destino ? `${v.origen} → ${v.destino}` : v.titulo;
+                  return (
+                    <tr key={v.id} className="border-b border-border/50 last:border-0 hover:bg-slate-50">
+                      <td className="px-2 py-2 text-neutral">{v.id}</td>
+                      <td className="px-2 py-2 text-slate-700">{v.fecha_servicio}</td>
+                      <td className="px-2 py-2 font-semibold text-slate-800">{v.placa || "-"}</td>
+                      <td className="px-2 py-2 text-slate-700">{v.servicio_nombre ?? "Viaje"}</td>
+                      <td className="px-2 py-2 text-slate-600">{ruta}</td>
+                      {isManifiestos && <td className="px-2 py-2 text-slate-700">{v.manifiesto_numero ?? "-"}</td>}
+                      {showIngreso && (
+                        <td className="px-2 py-2 text-right font-semibold text-emerald-700">
+                          {v.tarifa_cliente != null ? fmt(v.tarifa_cliente) : "-"}
+                        </td>
+                      )}
+                      {showCosto && (
+                        <td className="px-2 py-2 text-right text-sky-700">
+                          {v.tarifa_tercero != null ? fmt(v.tarifa_tercero) : "-"}
+                        </td>
+                      )}
+                      {isCointra && (
+                        <td className={`px-2 py-2 text-right font-semibold ${ganancia >= 0 ? "text-teal-700" : "text-rose-600"}`}>
+                          {fmt(ganancia)}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="border-t-2 border-border">
+                <tr className="bg-slate-50 font-semibold text-slate-800">
+                  <td className="px-2 py-2" colSpan={baseCols}>
+                    Total ({filtered.length} servicios)
+                  </td>
+                  {showIngreso && (
+                    <td className="px-2 py-2 text-right text-emerald-700">
+                      {fmt(filtered.reduce((s, v) => s + (v.tarifa_cliente ?? 0), 0))}
+                    </td>
+                  )}
+                  {showCosto && (
+                    <td className="px-2 py-2 text-right text-sky-700">
+                      {fmt(filtered.reduce((s, v) => s + (v.tarifa_tercero ?? 0), 0))}
+                    </td>
+                  )}
+                  {isCointra && (
+                    <td className="px-2 py-2 text-right text-teal-700">
+                      {fmt(filtered.reduce((s, v) => s + (v.tarifa_cliente ?? 0) - (v.tarifa_tercero ?? 0), 0))}
+                    </td>
+                  )}
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

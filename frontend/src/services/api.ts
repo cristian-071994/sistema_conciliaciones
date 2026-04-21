@@ -200,10 +200,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  viajes: (operacionId?: number, onlyPending = false) => {
+  viajes: (operacionId?: number, onlyPending = false, fechaDesde?: string, fechaHasta?: string) => {
     const search = new URLSearchParams();
     if (operacionId) search.set("operacion_id", String(operacionId));
     if (onlyPending) search.set("only_pending", "true");
+    if (fechaDesde) search.set("fecha_desde", fechaDesde);
+    if (fechaHasta) search.set("fecha_hasta", fechaHasta);
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return request<Viaje[]>(`/viajes${suffix}`);
   },

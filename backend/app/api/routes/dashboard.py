@@ -670,14 +670,18 @@ def dashboard_indicadores(
         costo_servicios_tipo[etiqueta]["tercero"] += float(viaje.tarifa_tercero or 0)
         costo_servicios_tipo[etiqueta]["cliente"] += float(viaje.tarifa_cliente or 0)
 
-    _costo_field = "cliente" if user.rol == UserRole.CLIENTE else "tercero"
     costo_por_tipo = sorted(
         [
-            {"label": k.title(), "value": round(v[_costo_field], 2)}
+            {
+                "label": k.title(),
+                "ingreso": round(v["cliente"], 2),
+                "costo": round(v["tercero"], 2),
+                "ganancia": round(v["cliente"] - v["tercero"], 2),
+            }
             for k, v in costo_servicios_tipo.items()
             if v["tercero"] > 0 or v["cliente"] > 0
         ],
-        key=lambda row: row["value"],
+        key=lambda row: row["ingreso"],
         reverse=True,
     )
 

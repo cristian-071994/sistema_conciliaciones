@@ -266,6 +266,8 @@ def create_viaje(
 def list_viajes(
     operacion_id: int | None = None,
     only_pending: bool = False,
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
@@ -287,6 +289,10 @@ def list_viajes(
         query = query.filter(Viaje.operacion_id == operacion_id)
     if only_pending:
         query = query.filter(Viaje.conciliado.is_(False))
+    if fecha_desde:
+        query = query.filter(Viaje.fecha_servicio >= fecha_desde)
+    if fecha_hasta:
+        query = query.filter(Viaje.fecha_servicio <= fecha_hasta)
 
     viajes = query.order_by(Viaje.id.desc()).all()
 
