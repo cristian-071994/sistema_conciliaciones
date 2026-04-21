@@ -333,6 +333,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const selectedConciliacionRef = useRef<HTMLElement | null>(null);
   const reviewRecipientDirtyRef = useRef(false);
   const suggestedReviewForConciliacionRef = useRef<number | null>(null);
+  const isAutoPatching = useRef(false);
 
   const selected = conciliaciones.find((c) => c.id === selectedConciliacion) || null;
   const maxDate = new Date().toISOString().split("T")[0];
@@ -827,6 +828,29 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     );
   }, [itemsViajeBajoLiquidacion]);
 
+  const disponibilidadCalculada = useMemo(() => {
+    const map = new Map<string, number>();
+    const dispItems = itemsConciliacion.filter((item) => {
+      const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+      const nombre = String(item.servicio_nombre || "").trim().toLowerCase();
+      return codigo === "DISPONIBILIDAD" || nombre === "disponibilidad";
+    });
+    for (const dispItem of dispItems) {
+      const placa = String(dispItem.placa || "").trim().toUpperCase();
+      if (!placa) continue;
+      const liquidacion = itemsLiquidacion.find(
+        (i) => String(i.placa || "").trim().toUpperCase() === placa
+      );
+      if (!liquidacion) continue;
+      const sumaViajes = itemsViajeBajoLiquidacion
+        .filter((i) => String(i.placa || "").trim().toUpperCase() === placa)
+        .reduce((sum, i) => sum + (i.tarifa_tercero ?? 0), 0);
+      const diferencia = Math.max(0, Math.round(((liquidacion.tarifa_tercero ?? 0) - sumaViajes) * 100) / 100);
+      map.set(placa, diferencia);
+    }
+    return map;
+  }, [itemsConciliacion, itemsLiquidacion, itemsViajeBajoLiquidacion]);
+
   const itemsClienteRevision = useMemo(
     () => items,
     [items]
@@ -888,6 +912,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   function isTransportServiceItem(item: Item): boolean {
     const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
     return codigo === "VIAJE" || codigo === "VIAJE_ADICIONAL";
+  }
+
+  function isDisponibilidadItem(item: Item): boolean {
+    const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+    const nombre = String(item.servicio_nombre || "").trim().toLowerCase();
+    return codigo === "DISPONIBILIDAD" || nombre === "disponibilidad";
   }
 
   function getConciliacionEstadoLabel(conciliacion: Conciliacion): string {
@@ -1360,6 +1390,40 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       });
       await onRefreshConciliaciones();
       await loadItems(selected.id);
+
+      // Auto-crear servicio Disponibilidad para garantizar el mínimo del contrato fijo.
+      // Se toma la suma de tarifa_tercero de todos los viajes del bloque 2 que coincidan
+      // con la placa; la diferencia respecto al valor del registro se crea como servicio
+      // de Disponibilidad en el bloque 3 (adicionales) de la conciliación.
+      const placaNorm = placa.trim().toUpperCase();
+      const updatedItems = await api.items(selected.id);
+      const sumaViajes = updatedItems
+        .filter((item) => {
+          if (item.liquidacion_contrato_fijo) return false;
+          const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+          return codigo === "VIAJE" && String(item.placa || "").trim().toUpperCase() === placaNorm;
+        })
+        .reduce((sum, item) => sum + (item.tarifa_tercero ?? 0), 0);
+      const diferencia = Math.round((valorTerceroNum - sumaViajes) * 100) / 100;
+
+      if (diferencia > 0) {
+        const disponibilidadServicio = servicios.find(
+          (s) =>
+            s.codigo === "DISPONIBILIDAD" ||
+            s.nombre.toLowerCase().trim() === "disponibilidad"
+        );
+        const nuevoViaje = await api.crearViaje({
+          operacion_id: selected.operacion_id,
+          servicio_id: disponibilidadServicio?.id ?? undefined,
+          titulo: `Disponibilidad ${placaNorm}`,
+          fecha_servicio: periodo_inicio,
+          placa: placaNorm,
+          tarifa_tercero: diferencia,
+        });
+        await api.adjuntarViajesConciliacion(selected.id, [nuevoViaje.id]);
+        await loadItems(selected.id);
+      }
+
       setLiquidacionContratoFijoForm({
         periodo_inicio,
         periodo_fin,
@@ -1829,6 +1893,42 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       void loadVehiculosData();
     }
   }, [activeModule]);
+
+  useEffect(() => {
+    if (!selected || selected.estado !== "BORRADOR") return;
+    if (disponibilidadCalculada.size === 0) return;
+    if (isAutoPatching.current) return;
+
+    const dispItems = itemsConciliacion.filter((item) => {
+      const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+      const nombre = String(item.servicio_nombre || "").trim().toLowerCase();
+      return codigo === "DISPONIBILIDAD" || nombre === "disponibilidad";
+    });
+    const toUpdate = dispItems.filter((item) => {
+      const placa = String(item.placa || "").trim().toUpperCase();
+      const expected = disponibilidadCalculada.get(placa);
+      if (expected === undefined) return false;
+      return Math.abs((item.tarifa_tercero ?? 0) - expected) > 0.01;
+    });
+
+    if (toUpdate.length === 0) return;
+
+    isAutoPatching.current = true;
+    void (async () => {
+      try {
+        for (const dispItem of toUpdate) {
+          const placa = String(dispItem.placa || "").trim().toUpperCase();
+          const newTarifa = disponibilidadCalculada.get(placa)!;
+          const updated = await api.patchConciliacionItem(dispItem.id, { tarifa_tercero: newTarifa });
+          setItems((prev) => prev.map((i) => (i.id === dispItem.id ? updated : i)));
+        }
+        await onRefreshConciliaciones();
+      } finally {
+        isAutoPatching.current = false;
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disponibilidadCalculada]);
 
   return (
     <div className="space-y-6">
@@ -4223,20 +4323,29 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         {user.rol !== "CLIENTE" && (
                           <td className="px-3 py-2">
                             {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                              <EditableCell
-                                initialValue={String(item.tarifa_tercero ?? "")}
-                                type="number"
-                                onSave={async (val) => {
-                                  await patchItemAndSync(item.id, { tarifa_tercero: Number(val) });
-                                }}
-                                placeholder="0"
-                                helperText={
-                                  item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
-                                    ? `Actual: ${formatMoney(item.tarifa_tercero)}`
-                                    : "Actual: -"
-                                }
-                                className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                              />
+                              isDisponibilidadItem(item) ? (
+                                <span className="flex flex-col gap-0.5">
+                                  <span className="text-sm text-slate-700">
+                                    {formatMoney(disponibilidadCalculada.get(String(item.placa || "").trim().toUpperCase()) ?? item.tarifa_tercero)}
+                                  </span>
+                                  <span className="text-[11px] text-neutral">Auto-calculado</span>
+                                </span>
+                              ) : (
+                                <EditableCell
+                                  initialValue={String(item.tarifa_tercero ?? "")}
+                                  type="number"
+                                  onSave={async (val) => {
+                                    await patchItemAndSync(item.id, { tarifa_tercero: Number(val) });
+                                  }}
+                                  placeholder="0"
+                                  helperText={
+                                    item.tarifa_tercero !== null && item.tarifa_tercero !== undefined
+                                      ? `Actual: ${formatMoney(item.tarifa_tercero)}`
+                                      : "Actual: -"
+                                  }
+                                  className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                />
+                              )
                             ) : (
                               formatMoney(item.tarifa_tercero)
                             )}
@@ -4245,20 +4354,24 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         {user.rol !== "TERCERO" && (
                           <td className="px-3 py-2">
                             {user.rol === "COINTRA" && selected.estado === "BORRADOR" ? (
-                              <EditableCell
-                                initialValue={String(item.tarifa_cliente ?? "")}
-                                type="number"
-                                onSave={async (val) => {
-                                  await patchItemAndSync(item.id, { tarifa_cliente: Number(val) });
-                                }}
-                                placeholder="0"
-                                helperText={
-                                  item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
-                                    ? `Actual: ${formatMoney(item.tarifa_cliente)}`
-                                    : "Actual: -"
-                                }
-                                className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-                              />
+                              isDisponibilidadItem(item) ? (
+                                <span className="text-sm text-slate-700">{formatMoney(item.tarifa_cliente)}</span>
+                              ) : (
+                                <EditableCell
+                                  initialValue={String(item.tarifa_cliente ?? "")}
+                                  type="number"
+                                  onSave={async (val) => {
+                                    await patchItemAndSync(item.id, { tarifa_cliente: Number(val) });
+                                  }}
+                                  placeholder="0"
+                                  helperText={
+                                    item.tarifa_cliente !== null && item.tarifa_cliente !== undefined
+                                      ? `Actual: ${formatMoney(item.tarifa_cliente)}`
+                                      : "Actual: -"
+                                  }
+                                  className="w-28 rounded-lg border border-border bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                                />
+                              )
                             ) : (
                               formatMoney(item.tarifa_cliente)
                             )}
