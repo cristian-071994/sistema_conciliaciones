@@ -1356,12 +1356,65 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return;
     }
 
+    // Capturar la placa antes de quitar para re-evaluar Disponibilidad después
+    const itemAQuitar = items.find((it) => it.viaje_id === viajeId);
+    const placaAfectada = itemAQuitar ? String(itemAQuitar.placa || "").trim().toUpperCase() : null;
+
     setError("");
     try {
       await api.quitarViajeConciliacion(selected.id, viajeId);
       await onRefreshConciliaciones();
       await loadItems(selected.id);
       await loadViajes();
+
+      // Re-evaluar Disponibilidad para la placa afectada
+      if (placaAfectada) {
+        const updatedItems = await api.items(selected.id);
+
+        // Buscar el registro de Liquidación Contrato Fijo para esa placa
+        const liquidacionItem = updatedItems.find(
+          (it) => !!it.liquidacion_contrato_fijo && String(it.placa || "").trim().toUpperCase() === placaAfectada
+        );
+        if (liquidacionItem && (liquidacionItem.tarifa_tercero ?? 0) > 0) {
+          // Verificar si ya existe un item de Disponibilidad para esa placa
+          const dispExistente = updatedItems.find((it) => {
+            if (String(it.placa || "").trim().toUpperCase() !== placaAfectada) return false;
+            const cod = String(it.servicio_codigo || "").trim().toUpperCase();
+            const nom = String(it.servicio_nombre || "").trim().toLowerCase();
+            return cod === "DISPONIBILIDAD" || nom === "disponibilidad";
+          });
+
+          if (!dispExistente) {
+            // Calcular suma de viajes reales (sin Disponibilidad ni liquidación)
+            const sumaViajes = updatedItems
+              .filter((it) => {
+                if (it.liquidacion_contrato_fijo) return false;
+                if (String(it.placa || "").trim().toUpperCase() !== placaAfectada) return false;
+                const cod = String(it.servicio_codigo || "").trim().toUpperCase();
+                const nom = String(it.servicio_nombre || "").trim().toLowerCase();
+                return cod !== "DISPONIBILIDAD" && nom !== "disponibilidad";
+              })
+              .reduce((sum, it) => sum + (it.tarifa_tercero ?? 0), 0);
+            const diferencia = Math.round(((liquidacionItem.tarifa_tercero ?? 0) - sumaViajes) * 100) / 100;
+
+            if (diferencia > 0) {
+              const disponibilidadServicio = servicios.find(
+                (s) => s.codigo === "DISPONIBILIDAD" || s.nombre.toLowerCase().trim() === "disponibilidad"
+              );
+              const nuevoViaje = await api.crearViaje({
+                operacion_id: selected.operacion_id,
+                servicio_id: disponibilidadServicio?.id ?? undefined,
+                titulo: `Disponibilidad ${placaAfectada}`,
+                fecha_servicio: liquidacionItem.fecha_servicio ?? selected.fecha_inicio ?? new Date().toISOString().slice(0, 10),
+                placa: placaAfectada,
+                tarifa_tercero: diferencia,
+              });
+              await api.adjuntarViajesConciliacion(selected.id, [nuevoViaje.id]);
+              await loadItems(selected.id);
+            }
+          }
+        }
+      }
     } catch (e) {
       setError(toSpanishError(e));
     }
