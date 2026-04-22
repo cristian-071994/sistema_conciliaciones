@@ -66,6 +66,7 @@ class ConciliacionOut(ORMModel):
     fecha_rechazo: datetime | None = None
     fecha_envio_facturacion: datetime | None = None
     fecha_facturado: datetime | None = None
+    items_count: int | None = None
 
 
 class ConciliacionItemCreate(BaseModel):

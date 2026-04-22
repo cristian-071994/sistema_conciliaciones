@@ -186,6 +186,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
     el.focus({ preventScroll: true });
   }
+  // Solo COINTRA_ADMIN puede inactivar/reactivar conciliaciones
   const isCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
   const [viajes, setViajes] = useState<Viaje[]>([]);
   const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
@@ -2600,7 +2601,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             {estadoVisible}
                           </span>
                         </td>
-                        {isCointraAdmin && (
+                        {user.rol === "COINTRA" && (
                           <td className="px-2 py-2 whitespace-nowrap">{v.activo ? "Sí" : "No"}</td>
                         )}
                         <td className="px-2 py-2 max-w-[180px] truncate">
@@ -2989,29 +2990,31 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                             </button>
                             {isCointraAdmin && (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={() => void editConciliacion(c)}
-                                  className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                                >
-                                  Editar
-                                </button>
-                                {c.activo && (
+                                {/* Botón único que cambia entre Inactivar y Activar */}
+                                {c.activo ? (
                                   <button
                                     type="button"
-                                    onClick={() => void deactivateConciliacion(c)}
+                                    onClick={() => {
+                                      if ((c as any).items_count > 0) {
+                                        setSaveResultModal({
+                                          title: "No se puede inactivar",
+                                          description: "No se puede inactivar una conciliación con registros o viajes asociados.",
+                                        });
+                                      } else {
+                                        deactivateConciliacion(c);
+                                      }
+                                    }}
                                     className="inline-flex items-center rounded-full border border-danger/40 bg-danger/5 px-3 py-1.5 text-xs font-medium text-danger shadow-sm hover:bg-danger/10"
                                   >
                                     Inactivar
                                   </button>
-                                )}
-                                {!c.activo && (
+                                ) : (
                                   <button
                                     type="button"
-                                    onClick={() => void reactivateConciliacion(c)}
+                                    onClick={() => reactivateConciliacion(c)}
                                     className="inline-flex items-center rounded-full border border-success/40 bg-success/10 px-3 py-1.5 text-xs font-medium text-success shadow-sm hover:bg-success/20"
                                   >
-                                    Reactivar
+                                    Activar
                                   </button>
                                 )}
                               </>

@@ -439,6 +439,10 @@ def _enrich_conciliacion(
     base["fecha_rechazo"] = timestamps["fecha_rechazo"]
     base["fecha_envio_facturacion"] = timestamps["fecha_envio_facturacion"]
     base["fecha_facturado"] = timestamps["fecha_facturado"]
+    # Agregar items_count para el frontend
+    base["items_count"] = (
+        db.query(ConciliacionItem).filter(ConciliacionItem.conciliacion_id == conc.id).count()
+    )
     return base
 
 
@@ -2394,6 +2398,7 @@ def create_conciliacion(
             Viaje.operacion_id == payload.operacion_id,
             Viaje.conciliacion_id.is_(None),
             Viaje.fecha_servicio <= payload.fecha_fin,
+            Viaje.activo == True,
         )
         .order_by(Viaje.fecha_servicio.asc(), Viaje.id.asc())
         .all()
@@ -2559,11 +2564,21 @@ def deactivate_conciliacion(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    _ensure_cointra_admin(user)
+
+    # Permitir a cualquier usuario COINTRA
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo usuarios Cointra pueden inactivar conciliaciones")
 
     conc = db.get(Conciliacion, conciliacion_id)
     if not conc:
         raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
+
+
+    # Validar que la conciliación esté vacía (sin items ni viajes)
+    items_count = db.query(ConciliacionItem).filter(ConciliacionItem.conciliacion_id == conciliacion_id).count()
+    viajes_count = db.query(Viaje).filter(Viaje.conciliacion_id == conciliacion_id).count()
+    if items_count > 0 or viajes_count > 0:
+        raise HTTPException(status_code=400, detail="Solo se puede inactivar una conciliación vacía (sin registros ni viajes relacionados)")
 
     conc.activo = False
     db.commit()
