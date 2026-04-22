@@ -271,6 +271,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [editManifiestoError, setEditManifiestoError] = useState("");
   const [confirmDeleteManifiestoItemId, setConfirmDeleteManifiestoItemId] = useState<number | null>(null);
   const [clientDecisionError, setClientDecisionError] = useState("");
+  const [clientDecisionPrecheckModal, setClientDecisionPrecheckModal] = useState<{
+    title: string;
+    description: string;
+  } | null>(null);
   const [clientDecisionModal, setClientDecisionModal] = useState<{
     action: "aprobar" | "devolver";
     observacion: string;
@@ -915,6 +919,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     const normalized = String(placa || "").trim().toUpperCase();
     if (!normalized) return "-";
     return configuracionVehiculoByPlaca.get(normalized) ?? "-";
+  }
+
+  function normalizePlaca(value: string | null | undefined): string {
+    return String(value || "").trim().toUpperCase();
+  }
+
+  function isViajeBlockItem(item: Item): boolean {
+    const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
+    const tipo = String(item.tipo || "").trim().toUpperCase();
+    return codigo === "VIAJE" || codigo === "VIAJE_ADICIONAL" || tipo === "VIAJE";
   }
 
   function isHoraExtraItem(item: Item): boolean {
@@ -1684,10 +1698,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     if (!selected || !clientDecisionModal || user.rol !== "CLIENTE") return;
 
     const shouldApproveAll = clientDecisionModal.action === "aprobar";
-    if (shouldApproveAll && !allClientItemsChecked) {
-      setClientDecisionError("Para autorizar debes marcar como aprobados todos los registros de la conciliación (contrato fijo y demás servicios).");
-      return;
-    }
 
     if (!shouldApproveAll && !clientDecisionModal.observacion.trim()) {
       setClientDecisionError("Debes escribir observaciones para devolver la conciliación.");
@@ -1711,6 +1721,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
 
     if (shouldApproveAll && clientDecisionModal.enviarCorreo && !clientDecisionModal.poNumero.trim()) {
       setClientDecisionError("Debes registrar el número de PO para autorizar y notificar la conciliación.");
+      return;
+    }
+
+    // Validación al confirmar autorización (no durante el marcado de checks)
+    if (shouldApproveAll && !allClientItemsChecked) {
+      setClientDecisionError(
+        "Para autorizar debes marcar como aprobados todos los registros de la conciliación (contrato fijo y demás servicios)."
+      );
       return;
     }
 
@@ -3334,6 +3352,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                           for (const it of itemsLiquidacion) {
                                             next[it.id] = checked;
                                           }
+                                          // Si el cliente aprueba/desaprueba contrato fijo, sincroniza automáticamente
+                                          // los servicios del bloque VIAJE por placa.
+                                          const placas = new Set(
+                                            itemsLiquidacion.map((x) => normalizePlaca(x.placa)).filter(Boolean)
+                                          );
+                                          for (const viajeItem of itemsViajeBajoLiquidacion) {
+                                            if (!isViajeBlockItem(viajeItem)) continue;
+                                            const placa = normalizePlaca(viajeItem.placa);
+                                            if (placa && placas.has(placa)) {
+                                              next[viajeItem.id] = checked;
+                                            }
+                                          }
                                           return next;
                                         });
                                       }}
@@ -3366,12 +3396,24 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     <input
                                       type="checkbox"
                                       checked={!!clientItemSelections[item.id]}
-                                      onChange={(e) =>
-                                        setClientItemSelections((prev) => ({
-                                          ...prev,
-                                          [item.id]: e.target.checked,
-                                        }))
-                                      }
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        const placa = normalizePlaca(item.placa);
+                                        setClientItemSelections((prev) => {
+                                          const next = { ...prev, [item.id]: checked };
+                                          // Al aprobar/desaprobar un registro de contrato fijo,
+                                          // sincroniza los checks del bloque "Servicios VIAJE" por placa.
+                                          if (placa) {
+                                            for (const viajeItem of itemsViajeBajoLiquidacion) {
+                                              if (!isViajeBlockItem(viajeItem)) continue;
+                                              if (normalizePlaca(viajeItem.placa) === placa) {
+                                                next[viajeItem.id] = checked;
+                                              }
+                                            }
+                                          }
+                                          return next;
+                                        });
+                                      }}
                                       className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
                                     />
                                   </td>
@@ -4614,7 +4656,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      // No abrir modal si no están todos los registros aprobados
+                      if (!allClientItemsChecked) {
+                        setClientDecisionPrecheckModal({
+                          title: "Faltan registros por autorizar",
+                          description:
+                            "Para autorizar debes marcar como aprobados todos los registros de la conciliación (contrato fijo y demás servicios).",
+                        });
+                        return;
+                      }
                       setClientDecisionModal({
                         action: "aprobar",
                         observacion: "",
@@ -4622,8 +4673,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         destinatario: suggestedClientReplyRecipient,
                         mensaje: "",
                         poNumero: "",
-                      })
-                    }
+                      });
+                    }}
                     onMouseDown={() => setClientDecisionError("")}
                     className="rounded-lg bg-success px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-success/90"
                   >
@@ -4665,6 +4716,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         confirmText="Aceptar"
         onClose={() => setSaveResultModal(null)}
         onConfirm={async () => setSaveResultModal(null)}
+      />
+
+      <ActionModal
+        open={!!clientDecisionPrecheckModal}
+        title={clientDecisionPrecheckModal?.title ?? "Validación"}
+        description={clientDecisionPrecheckModal?.description ?? ""}
+        confirmText="Entendido"
+        onClose={() => setClientDecisionPrecheckModal(null)}
+        onConfirm={async () => setClientDecisionPrecheckModal(null)}
       />
 
       <ActionModal

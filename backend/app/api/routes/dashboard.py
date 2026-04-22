@@ -422,6 +422,9 @@ def dashboard_indicadores(
     )
     prev_viajes = prev_viajes_query.all()
 
+    viajes_summary = _summarize_viajes(viajes)
+    prev_viajes_summary = _summarize_viajes(prev_viajes)
+
     # Items del período anterior — misma lógica por fecha_servicio
     if cliente_visible_conc_ids:
         prev_items_rows = (
@@ -505,7 +508,7 @@ def dashboard_indicadores(
     operacion_map = {row.id: row for row in operaciones}
 
     top_operaciones = []
-    for operacion_id, values in items_summary["operacion_totales"].items():
+    for operacion_id, values in viajes_summary["operacion_totales"].items():
         ingresos = float(values["ingresos"])
         costos = float(values["costos"])
         operacion = operacion_map.get(operacion_id)
@@ -523,7 +526,7 @@ def dashboard_indicadores(
 
     cliente_totales: dict[str, dict[str, float]] = defaultdict(lambda: {"servicios": 0.0, "ingresos": 0.0, "costos": 0.0})
     tercero_totales: dict[str, dict[str, float]] = defaultdict(lambda: {"servicios": 0.0, "ingresos": 0.0, "costos": 0.0})
-    for operacion_id, values in items_summary["operacion_totales"].items():
+    for operacion_id, values in viajes_summary["operacion_totales"].items():
         operacion = operacion_map.get(operacion_id)
         cliente_nombre = operacion.cliente.nombre if operacion and operacion.cliente else "Sin cliente"
         tercero_nombre = operacion.tercero.nombre if operacion and operacion.tercero else "Sin tercero"
@@ -537,7 +540,7 @@ def dashboard_indicadores(
         tercero_totales[tercero_nombre]["costos"] += values["costos"]
 
     top_placas = []
-    for placa, values in items_summary["placa_totales"].items():
+    for placa, values in viajes_summary["placa_totales"].items():
         if placa.upper() in {"N/A", "N/D", ""}:
             continue
         ingresos = float(values["ingresos"])
@@ -685,14 +688,22 @@ def dashboard_indicadores(
         reverse=True,
     )
 
-    previous_ganancia = float(prev_items_summary["total_ganancia"])
-    current_ganancia = float(items_summary["total_ganancia"])
+    previous_ganancia = float(prev_viajes_summary["total_ganancia"])
+    current_ganancia = float(viajes_summary["total_ganancia"])
     if previous_ganancia == 0:
         variacion_ganancia = 100.0 if current_ganancia > 0 else 0.0
     else:
         variacion_ganancia = round(((current_ganancia - previous_ganancia) / abs(previous_ganancia)) * 100, 2)
 
-    return {
+    # KPIs monetarios salen desde Viajes (para reflejar registros directos en tabla viajes).
+    manifiestos_viajes = {
+        str(v.manifiesto_numero).strip()
+        for v in viajes
+        if v.manifiesto_numero and str(v.manifiesto_numero).strip()
+    }
+    manifiestos_count = len(manifiestos_viajes)
+
+    payload = {
         "period": {
             "mode": mode,
             "start_date": start.isoformat(),
@@ -703,15 +714,15 @@ def dashboard_indicadores(
         },
         "kpis": {
             "conciliaciones": conc_borrador + conc_en_revision + conc_aprobada + conc_devuelta + conc_enviada_facturar + conc_facturada,
-            "servicios": int(items_summary["total_servicios"]),
+            "servicios": int(viajes_summary["total_servicios"]),
             "manifiestos": manifiestos_count,
-            "ingresos": items_summary["total_ingresos"],
-            "costos": items_summary["total_costos"],
-            "ganancia": items_summary["total_ganancia"],
-            "margen_pct": items_summary["margen_pct"],
+            "ingresos": viajes_summary["total_ingresos"],
+            "costos": viajes_summary["total_costos"],
+            "ganancia": viajes_summary["total_ganancia"],
+            "margen_pct": viajes_summary["margen_pct"],
             "aprobacion_items_pct": items_summary["aprobacion_items_pct"],
-            "ticket_promedio": items_summary["ticket_promedio"],
-            "placas_activas": int(items_summary["placas_unicas"]),
+            "ticket_promedio": viajes_summary["ticket_promedio"],
+            "placas_activas": int(viajes_summary["placas_unicas"]),
             "variacion_ganancia_pct": variacion_ganancia,
             "viajes_pendientes": viajes_pendientes,
             "viajes_en_revision": viajes_en_revision,
@@ -746,3 +757,15 @@ def dashboard_indicadores(
             "placa_desglose": placa_desglose,
         },
     }
+
+    # Restricción de visibilidad financiera por rol (no solo UI: también en API).
+    if user.rol == UserRole.CLIENTE:
+        payload["kpis"]["costos"] = 0
+        payload["kpis"]["ganancia"] = 0
+        payload["kpis"]["margen_pct"] = 0
+    elif user.rol == UserRole.TERCERO:
+        payload["kpis"]["ingresos"] = 0
+        payload["kpis"]["ganancia"] = 0
+        payload["kpis"]["margen_pct"] = 0
+
+    return payload
