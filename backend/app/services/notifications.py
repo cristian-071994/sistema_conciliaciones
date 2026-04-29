@@ -13,6 +13,7 @@ def _send_email(
     subject: str,
     body: str,
     attachments: list[dict[str, object]] | None = None,
+    cc_emails: list[str] | None = None,
 ) -> tuple[bool, str | None]:
     if not settings.smtp_enabled:
         return False, "SMTP deshabilitado"
@@ -24,6 +25,8 @@ def _send_email(
         msg["Subject"] = subject
         msg["From"] = settings.mail_from
         msg["To"] = to_email
+        if cc_emails:
+            msg["Cc"] = ", ".join(cc_emails)
         msg.set_content(body)
         for attachment in attachments or []:
             filename = str(attachment.get("filename") or "adjunto.bin")
@@ -103,20 +106,27 @@ def render_email_template(template_key: str, context: dict[str, str]) -> tuple[s
 
 
 def send_manual_email(
-    recipients: list[str],
+    to_emails: list[str],
     *,
     subject: str,
     body: str,
     attachments: list[dict[str, object]] | None = None,
+    cc_emails: list[str] | None = None,
 ) -> dict:
-    sent = 0
-    failed = 0
-    errors: list[str] = []
-    for to_email in recipients:
-        ok, err = _send_email(to_email, subject, body, attachments=attachments)
+    # Enviar un solo correo con todos los destinatarios principales y CC
+    if not to_emails:
+        return {"sent": 0, "failed": 1, "errors": ["No hay destinatarios principales"]}
+    try:
+        ok, err = _send_email(
+            ", ".join(to_emails),
+            subject,
+            body,
+            attachments=attachments,
+            cc_emails=cc_emails,
+        )
         if ok:
-            sent += 1
+            return {"sent": 1, "failed": 0, "errors": []}
         else:
-            failed += 1
-            errors.append(f"{to_email}: {err}")
-    return {"sent": sent, "failed": failed, "errors": errors}
+            return {"sent": 0, "failed": 1, "errors": [err or "Error desconocido"]}
+    except Exception as exc:
+        return {"sent": 0, "failed": 1, "errors": [str(exc)]}

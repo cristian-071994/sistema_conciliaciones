@@ -28,6 +28,7 @@ class ConciliacionUpdateEstado(BaseModel):
 class ConciliacionWorkflowAction(BaseModel):
     observacion: str | None = None
     destinatario_email: str | None = None
+    cc_emails: str | None = None  # String separado por coma/punto y coma
     mensaje: str | None = None
     po_numero: str | None = None
 

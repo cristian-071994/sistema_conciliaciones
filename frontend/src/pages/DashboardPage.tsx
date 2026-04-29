@@ -1,4 +1,27 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+
+// Utilidades para sugerencias locales de correos
+const EMAIL_HISTORY_KEY = "sc_email_history";
+function getEmailHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(EMAIL_HISTORY_KEY);
+    if (!raw) return [];
+    return Array.from(new Set(JSON.parse(raw)));
+  } catch {
+    return [];
+  }
+}
+function addEmailsToHistory(emails: string) {
+  if (!emails) return;
+  const parts = emails
+    .split(/[;,]+/)
+    .map((e) => e.trim())
+    .filter((e) => e && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+  if (parts.length === 0) return;
+  const history = getEmailHistory();
+  const updated = Array.from(new Set([...parts, ...history])).slice(0, 30);
+  localStorage.setItem(EMAIL_HISTORY_KEY, JSON.stringify(updated));
+}
 import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { ActionModal } from "../components/common/ActionModal";
@@ -216,6 +239,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   const [error, setError] = useState("");
   const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [reviewRecipient, setReviewRecipient] = useState("");
+  const [reviewCC, setReviewCC] = useState("");
+  const [emailSuggestions, setEmailSuggestions] = useState<string[]>(getEmailHistory());
   const [reviewMessage, setReviewMessage] = useState("");
   const [selectedViajeDetalle, setSelectedViajeDetalle] = useState<Item | null>(null);
   const [filtroConciliacionId, setFiltroConciliacionId] = useState("");
@@ -281,15 +306,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     observacion: string;
     enviarCorreo: boolean;
     destinatario: string;
+    cc_emails?: string;
     mensaje: string;
     poNumero: string;
   } | null>(null);
   const [facturacionPanelOpen, setFacturacionPanelOpen] = useState(false);
   const [facturacionRecipient, setFacturacionRecipient] = useState("");
+  const [facturacionCC, setFacturacionCC] = useState("");
   const [facturacionMessage, setFacturacionMessage] = useState("");
   const [facturacionError, setFacturacionError] = useState("");
   const [facturaClientePanelOpen, setFacturaClientePanelOpen] = useState(false);
   const [facturaClienteRecipient, setFacturaClienteRecipient] = useState("");
+  const [facturaClienteCC, setFacturaClienteCC] = useState("");
   const [facturaClienteMessage, setFacturaClienteMessage] = useState("");
   const [facturaClienteFile, setFacturaClienteFile] = useState<File[]>([]);
   const [isSendingFacturaCliente, setIsSendingFacturaCliente] = useState(false);
@@ -583,12 +611,13 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       FACTURADO: 0,
     };
     for (const conciliacion of conciliaciones) {
-      const estado = getConciliacionEstadoLabel(conciliacion);
-      if (estado === "BORRADOR") counts.BORRADOR += 1;
-      if (estado === "EN_REVISION") counts.EN_REVISION += 1;
-      if (estado === "APROBADA") counts.APROBADA += 1;
-      if (estado === "ENVIADA_A_FACTURAR") counts.ENVIADA_A_FACTURAR += 1;
-      if (estado === "FACTURADO") counts.FACTURADO += 1;
+      // Solo contar estados válidos, nunca "DEVUELTA"
+      if (conciliacion.estado === "BORRADOR") counts.BORRADOR += 1;
+      else if (conciliacion.estado === "EN_REVISION") counts.EN_REVISION += 1;
+      else if (conciliacion.estado === "APROBADA") counts.APROBADA += 1;
+      else if (conciliacion.estado === "CERRADA" && conciliacion.factura_cliente_enviada) counts.FACTURADO += 1;
+      // ENVIADA_A_FACTURAR es un subestado de APROBADA
+      if (conciliacion.estado === "APROBADA" && conciliacion.enviada_facturacion) counts.ENVIADA_A_FACTURAR += 1;
     }
     return counts;
   }, [conciliaciones]);
@@ -956,6 +985,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   function getConciliacionEstadoLabel(conciliacion: Conciliacion): string {
     if (conciliacion.factura_cliente_enviada && conciliacion.estado === "CERRADA") return "FACTURADO";
     if (conciliacion.enviada_facturacion && conciliacion.estado === "APROBADA") return "ENVIADA_A_FACTURAR";
+    // DEVUELTA no se muestra en UI, se trata como EN_REVISION en backend
     return conciliacion.estado;
   }
 
@@ -1678,14 +1708,20 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       await api.enviarRevisionConciliacion(selected.id, {
         observacion,
         destinatario_email: reviewRecipient || undefined,
+        cc_emails: reviewCC || undefined,
         mensaje: reviewMessage || undefined,
       });
+      // Guardar correos usados en localStorage
+      addEmailsToHistory(reviewRecipient);
+      addEmailsToHistory(reviewCC);
+      setEmailSuggestions(getEmailHistory());
       await onRefreshConciliaciones();
       await loadItems(selected.id);
       await loadViajes();
       setShowReviewPanel(false);
       setReviewSuccessMessage("Correo enviado correctamente y usuario notificado en el sistema.");
       setReviewRecipient("");
+      setReviewCC("");
       reviewRecipientDirtyRef.current = false;
       setReviewMessage("");
     } catch (e) {
@@ -1752,6 +1788,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
           clientDecisionModal.enviarCorreo && clientDecisionModal.destinatario.trim()
             ? clientDecisionModal.destinatario.trim()
             : undefined,
+        cc_emails: clientDecisionModal.cc_emails || undefined,
         mensaje:
           clientDecisionModal.enviarCorreo && clientDecisionModal.mensaje.trim()
             ? clientDecisionModal.mensaje.trim()
@@ -1767,7 +1804,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         setReviewSuccessMessage("Autorización confirmada y conciliación aprobada.");
       } else {
         await api.devolverConciliacionCliente(selected.id, payload);
-        setReviewSuccessMessage("Conciliación devuelta a Cointra con observaciones.");
+        setReviewSuccessMessage("Conciliación regresada a Cointra con observaciones.");
       }
 
       await onRefreshConciliaciones();
@@ -1788,12 +1825,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     try {
       await api.enviarFacturacionConciliacion(selected.id, {
         destinatario_email: facturacionRecipient || undefined,
+        cc_emails: facturacionCC || undefined,
         mensaje: facturacionMessage || undefined,
       });
       await onRefreshConciliaciones();
       await loadItems(selected.id);
       setFacturacionPanelOpen(false);
       setFacturacionRecipient("");
+      setFacturacionCC("");
       setFacturacionMessage("");
       setReviewSuccessMessage("Conciliación enviada a facturación con archivo Excel adjunto por correo.");
     } catch (e) {
@@ -1820,6 +1859,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     try {
       await api.enviarFacturaClienteConciliacion(selected.id, {
         destinatario_email: facturaClienteRecipient || undefined,
+        cc_emails: facturaClienteCC || undefined,
         mensaje: facturaClienteMessage || undefined,
         archivos_factura: facturaClienteFile,
       });
@@ -1827,6 +1867,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       await loadItems(selected.id);
       setFacturaClientePanelOpen(false);
       setFacturaClienteRecipient("");
+      setFacturaClienteCC("");
       setFacturaClienteMessage("");
       setFacturaClienteFile([]);
       setReviewSuccessMessage("Factura enviada al cliente con PDF adjunto. La conciliación quedó en estado FACTURADO.");
@@ -4029,16 +4070,33 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     <div className="grid gap-3 md:grid-cols-[minmax(260px,1.1fr),minmax(260px,1.4fr),auto]">
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                          Enviar a
+                          Para
                         </label>
                         <input
                           type="text"
+                          list="email-suggestions"
                           value={reviewRecipient}
                           onChange={(e) => {
                             reviewRecipientDirtyRef.current = true;
                             setReviewRecipient(e.target.value);
                           }}
                           placeholder="correo1@empresa.com, correo2@empresa.com"
+                          className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        />
+                        <datalist id="email-suggestions">
+                          {emailSuggestions.map((email) => (
+                            <option key={email} value={email} />
+                          ))}
+                        </datalist>
+                        <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                          CC
+                        </label>
+                        <input
+                          type="text"
+                          list="email-suggestions"
+                          value={reviewCC}
+                          onChange={(e) => setReviewCC(e.target.value)}
+                          placeholder="correo3@empresa.com, correo4@empresa.com"
                           className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                         />
                         <p className="mt-1 text-[11px] text-neutral">
@@ -4111,13 +4169,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     <div className="grid gap-3 md:grid-cols-[minmax(260px,1.1fr),minmax(260px,1.4fr),auto]">
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                          Correos de destino
+                          Para
                         </label>
                         <input
                           type="text"
+                          list="email-suggestions"
                           value={facturacionRecipient}
                           onChange={(e) => setFacturacionRecipient(e.target.value)}
                           placeholder="correo1@empresa.com; correo2@empresa.com"
+                          className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                        />
+                        <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                          CC
+                        </label>
+                        <input
+                          type="text"
+                          list="email-suggestions"
+                          value={facturacionCC}
+                          onChange={(e) => setFacturacionCC(e.target.value)}
+                          placeholder="correo3@empresa.com; correo4@empresa.com"
                           className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                         />
                         <p className="mt-1 text-[11px] text-neutral">
@@ -4196,13 +4266,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                        Correos de destino
+                        Para
                       </label>
                       <input
                         type="text"
+                        list="email-suggestions"
                         value={facturaClienteRecipient}
                         onChange={(e) => setFacturaClienteRecipient(e.target.value)}
                         placeholder="correo1@empresa.com; correo2@empresa.com"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                      <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                        CC
+                      </label>
+                      <input
+                        type="text"
+                        list="email-suggestions"
+                        value={facturaClienteCC}
+                        onChange={(e) => setFacturaClienteCC(e.target.value)}
+                        placeholder="correo3@empresa.com; correo4@empresa.com"
                         className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                       />
                     </div>
@@ -4936,8 +5018,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                   prev ? { ...prev, destinatario: e.target.value } : prev
                 )
               }
-              placeholder="Correos destinatario (opcional): correo1@empresa.com; correo2@empresa.com"
+              placeholder="Para: correo1@empresa.com; correo2@empresa.com"
               className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            />
+            <input
+              value={clientDecisionModal.cc_emails || ""}
+              onChange={(e) =>
+                setClientDecisionModal((prev) =>
+                  prev ? { ...prev, cc_emails: e.target.value } : prev
+                )
+              }
+              placeholder="CC: correo3@empresa.com; correo4@empresa.com"
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 mt-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
             />
             <textarea
               value={clientDecisionModal.mensaje}

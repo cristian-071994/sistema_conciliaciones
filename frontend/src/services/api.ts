@@ -290,7 +290,7 @@ export const api = {
     }),
   enviarRevisionConciliacion: (
     conciliacionId: number,
-    payload: { observacion?: string; destinatario_email?: string; mensaje?: string }
+    payload: { observacion?: string; destinatario_email?: string; cc_emails?: string; mensaje?: string }
   ) =>
     request<Conciliacion>(`/conciliaciones/${conciliacionId}/enviar-revision`, {
       method: "POST",
@@ -310,7 +310,7 @@ export const api = {
     }),
   aprobarConciliacionCliente: (
     conciliacionId: number,
-    payload: { observacion?: string; destinatario_email?: string; mensaje?: string; po_numero?: string }
+    payload: { observacion?: string; destinatario_email?: string; cc_emails?: string; mensaje?: string; po_numero?: string }
   ) =>
     request<Conciliacion>(`/conciliaciones/${conciliacionId}/aprobar-cliente`, {
       method: "POST",
@@ -318,7 +318,7 @@ export const api = {
     }),
   devolverConciliacionCliente: (
     conciliacionId: number,
-    payload: { observacion?: string; destinatario_email?: string; mensaje?: string }
+    payload: { observacion?: string; destinatario_email?: string; cc_emails?: string; mensaje?: string }
   ) =>
     request<Conciliacion>(`/conciliaciones/${conciliacionId}/devolver-cliente`, {
       method: "POST",
@@ -326,7 +326,7 @@ export const api = {
     }),
   enviarFacturacionConciliacion: (
     conciliacionId: number,
-    payload: { destinatario_email?: string; mensaje?: string }
+    payload: { destinatario_email?: string; cc_emails?: string; mensaje?: string }
   ) =>
     request<Conciliacion>(`/conciliaciones/${conciliacionId}/enviar-facturacion`, {
       method: "POST",
@@ -336,6 +336,7 @@ export const api = {
     conciliacionId: number,
     payload: {
       destinatario_email?: string;
+      cc_emails?: string;
       mensaje?: string;
       archivos_factura: File[];
     }
@@ -343,6 +344,7 @@ export const api = {
     const token = localStorage.getItem("token");
     const form = new FormData();
     if (payload.destinatario_email) form.append("destinatario_email", payload.destinatario_email);
+    if (payload.cc_emails) form.append("cc_emails", payload.cc_emails);
     if (payload.mensaje) form.append("mensaje", payload.mensaje);
     for (const archivo of payload.archivos_factura) {
       form.append("archivos_factura", archivo);

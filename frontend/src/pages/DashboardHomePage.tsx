@@ -1007,7 +1007,6 @@ export function DashboardHomePage({ user }: Props) {
             <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />
-            <StatCard title="Conciliaciones devueltas" value={String(data.kpis.conc_devuelta)} hint="Con devolución registrada" tone="devuelta" onClick={goToConciliacionesList} />
             <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Con marca de facturación" tone="facturar" onClick={goToConciliacionesList} />
             <StatCard title="Facturadas" value={String(data.kpis.conc_facturada)} hint="Factura enviada al cliente" tone="facturada" onClick={goToConciliacionesList} />
           </section>

@@ -53,7 +53,8 @@ export interface Conciliacion {
   nombre: string;
   fecha_inicio: string;
   fecha_fin: string;
-  estado: "BORRADOR" | "EN_REVISION" | "APROBADA" | "CERRADA";
+  // Permitimos DEVUELTA para evitar error de tipo, pero no se usa en UI
+  estado: "BORRADOR" | "EN_REVISION" | "APROBADA" | "CERRADA" | "DEVUELTA";
   activo: boolean;
   borrador_guardado: boolean;
   enviada_facturacion: boolean;

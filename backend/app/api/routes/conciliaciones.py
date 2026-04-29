@@ -3371,7 +3371,11 @@ def enviar_revision(
             "Ingresa al sistema para revisar y autorizar la conciliacion.\n"
             f"Accede aqui: {login_url}\n\n"
         )
-        email_result = send_manual_email(target_emails, subject=subject, body=body)
+        # Parsear cc_emails string a lista
+        cc_emails = []
+        if getattr(payload, "cc_emails", None):
+            cc_emails = [e.strip() for e in str(payload.cc_emails).replace(';', ',').split(',') if e.strip()]
+        email_result = send_manual_email(target_emails, subject=subject, body=body, cc_emails=cc_emails or None)
         if email_result["failed"] >= len(target_emails):
             db.rollback()
             detail = "No se pudo enviar el correo de revision"
@@ -3463,7 +3467,11 @@ def aprobar_conciliacion_cliente(
         "Ingresa al sistema para continuar con el flujo.\n"
         f"Accede aqui: {login_url}\n\n"
     )
-    send_manual_email(target_emails, subject=subject, body=body)
+    # Parsear cc_emails string a lista
+    cc_emails = []
+    if getattr(payload, "cc_emails", None):
+        cc_emails = [e.strip() for e in str(payload.cc_emails).replace(';', ',').split(',') if e.strip()]
+    send_manual_email(target_emails, subject=subject, body=body, cc_emails=cc_emails or None)
 
     create_internal_notifications(
         db,
@@ -3548,7 +3556,11 @@ def devolver_conciliacion_cliente(
             "Ingresa al sistema para revisar, ajustar y reenviar.\n"
             f"Accede aqui: {login_url}\n\n"
         )
-        send_manual_email(target_emails, subject=subject, body=body)
+        # Parsear cc_emails string a lista
+        cc_emails = []
+        if getattr(payload, "cc_emails", None):
+            cc_emails = [e.strip() for e in str(payload.cc_emails).replace(';', ',').split(',') if e.strip()]
+        send_manual_email(target_emails, subject=subject, body=body, cc_emails=cc_emails or None)
 
     create_internal_notifications(
         db,
@@ -3638,6 +3650,10 @@ def enviar_facturacion_conciliacion(
         "Adjunto encontraras el archivo Excel con los viajes.\n"
     )
 
+    # Parsear cc_emails string a lista
+    cc_emails = []
+    if getattr(payload, "cc_emails", None):
+        cc_emails = [e.strip() for e in str(payload.cc_emails).replace(';', ',').split(',') if e.strip()]
     send_result = send_manual_email(
         target_emails,
         subject=f"Autorizacion para facturar: {conc.nombre}",
@@ -3649,6 +3665,7 @@ def enviar_facturacion_conciliacion(
                 "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             }
         ],
+        cc_emails=cc_emails or None,
     )
     if send_result["failed"] >= len(target_emails):
         detail = "No se pudo enviar el correo de facturacion"
@@ -3741,6 +3758,7 @@ def enviar_factura_cliente_conciliacion(
         f"Accede aqui: {login_url}\n\n"
     )
 
+    # TODO: Recibir cc_emails del payload y pasarlos aquí
     send_result = send_manual_email(
         target_emails,
         subject=f"Factura conciliacion {conc.nombre} #{conc.id}",
@@ -3753,6 +3771,7 @@ def enviar_factura_cliente_conciliacion(
             }
             for a in archivos_leidos
         ],
+        cc_emails=getattr(payload, "cc_emails", None),
     )
     if send_result["failed"] >= len(target_emails):
         detail = "No se pudo enviar el correo de factura al cliente"
