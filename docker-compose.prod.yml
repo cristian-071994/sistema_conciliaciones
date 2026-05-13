@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    container_name: conciliacion_db_v12
+    restart: always
+    environment:
+      POSTGRES_USER: cointra_user_conciliaciones
+      POSTGRES_PASSWORD: C01ntra21$
+      POSTGRES_DB: conciliacion_db_v12
+    volumes:
+      - postgres_data_v12:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    container_name: conciliacion_backend_v12
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - "8001:8000"
+    env_file:
+      - ./backend/.env.prod
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: http://conciliaciones.cointra.com.co/api
+    container_name: conciliacion_frontend_v12
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data_v12:
