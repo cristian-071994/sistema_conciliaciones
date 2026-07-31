@@ -24,7 +24,7 @@ export function LoginForm({ onLogin }: Props) {
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
       <div>
-        <h1 className="text-lg font-semibold text-slate-900">Sistema de Conciliación</h1>
+        <h1 className="text-lg font-semibold text-slate-900">Refrigerados</h1>
         <p className="text-sm text-neutral">Cointra S.A.S.</p>
       </div>
 

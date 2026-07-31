@@ -90,7 +90,7 @@ def preview_correo(
     if payload.template_key:
         asunto, mensaje = render_email_template(payload.template_key, context)
     else:
-        asunto = payload.asunto or "Notificacion Sistema Conciliacion"
+        asunto = payload.asunto or "Notificacion Refrigerados"
         mensaje = payload.mensaje or ""
 
     if payload.asunto:
@@ -115,7 +115,7 @@ def send_correo_manual(
     if payload.template_key:
         asunto, mensaje = render_email_template(payload.template_key, context)
     else:
-        asunto = payload.asunto or "Notificacion Sistema Conciliacion"
+        asunto = payload.asunto or "Notificacion Refrigerados"
         mensaje = payload.mensaje or ""
 
     if payload.asunto:

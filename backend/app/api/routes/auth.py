@@ -66,7 +66,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     reset_link = f"{settings.frontend_url.rstrip('/')}/reset-password?token={quote(token)}"
     email_body = (
         f"Hola {user.nombre},\n\n"
-        "Recibimos una solicitud para restablecer tu password en Sistema de Conciliacion.\n"
+        "Recibimos una solicitud para restablecer tu password en Refrigerados.\n"
         f"Este enlace es valido por {settings.password_reset_token_expire_minutes} minutos:\n\n"
         f"{reset_link}\n\n"
         "Si no solicitaste este cambio, puedes ignorar este mensaje.\n"
@@ -74,7 +74,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
     send_result = send_manual_email(
         [user.email],
-        subject="Recuperacion de password - Sistema de Conciliacion",
+        subject="Recuperacion de password - Refrigerados",
         body=email_body,
     )
     if int(send_result.get("sent", 0)) < 1:

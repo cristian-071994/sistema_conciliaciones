@@ -104,7 +104,7 @@ export function App() {
   }, [user, conciliaciones, notificaciones]);
 
   useEffect(() => {
-    const baseTitle = "Sistema de Conciliación";
+    const baseTitle = "Refrigerados | Cointra";
     document.title = alertCount > 0 ? `(${alertCount}) ${baseTitle}` : baseTitle;
     return () => {
       document.title = baseTitle;

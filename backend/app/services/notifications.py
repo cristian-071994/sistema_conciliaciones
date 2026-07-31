@@ -102,7 +102,7 @@ def render_email_template(template_key: str, context: dict[str, str]) -> tuple[s
         )
         return subject, body
 
-    return "Notificacion Sistema Conciliacion", context.get("mensaje", "")
+    return "Notificacion Refrigerados", context.get("mensaje", "")
 
 
 def send_manual_email(

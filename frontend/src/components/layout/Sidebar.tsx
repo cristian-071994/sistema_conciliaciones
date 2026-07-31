@@ -58,7 +58,7 @@ export function Sidebar({ user }: SidebarProps) {
         <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-300 via-emerald-400 to-teal-500 shadow-lg shadow-emerald-900/20" />
         <div className="ml-3">
           <p className="text-xs uppercase tracking-wide text-emerald-200/80">Cointra</p>
-          <p className="text-sm font-semibold text-white">Conciliaciones</p>
+          <p className="text-sm font-semibold text-white">Refrigerados</p>
         </div>
       </div>
       <nav className="mt-4 flex-1 space-y-1 px-3 text-sm">

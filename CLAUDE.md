@@ -439,6 +439,34 @@ El super admin puede ver en tiempo real qué usuarios están conectados al siste
 
 ### Para la fase de despliegue en servidor (en orden de prioridad)
 
+0. **BLOQUEANTE — credenciales de producción embebidas en la imagen
+   Docker.** La imagen de producción actual (`docker-prod-v1.2` /
+   `docker-compose.prod.yml`), construida sin `backend/.dockerignore`,
+   muy probablemente contiene `backend/.env.prod` con credenciales
+   reales (Postgres, SMTP, Avansat, `SECRET_KEY`) embebidas en texto
+   plano dentro de la imagen — el `Dockerfile` hace `COPY . .` y hasta
+   el 2026-07-31 nada excluía esos archivos. Verificado empíricamente en
+   la imagen construida desde `conciliaciones_gateway` antes del fix:
+   `docker exec ... ls /app/` mostraba `.env` y `.env.prod` presentes;
+   son recuperables con un simple `docker run ... cat /app/.env.prod`
+   por cualquiera con acceso a la imagen.
+
+   **Esto NO se corrige solo con el `.dockerignore` de la rama
+   `feature/gateway-subpath`** (que sí evita que vuelva a ocurrir en
+   imágenes nuevas). Requiere, además:
+   - Reconstruir y redesplegar la imagen de producción con el
+     `.dockerignore` aplicado.
+   - **ROTAR todas las credenciales que pudieran haber quedado
+     expuestas** — especialmente `SECRET_KEY`: rotarla invalida todas
+     las sesiones firmadas con la clave vieja (todos los usuarios deben
+     volver a iniciar sesión), comportamiento esperado y correcto en
+     este caso, no un efecto secundario a evitar.
+
+   Bloqueante antes del corte real a producción vía el gateway. Va por
+   encima de `AVANSAT_VERIFY_SSL` en prioridad: aquí las credenciales ya
+   están expuestas de facto en un artefacto distribuible, no es un
+   riesgo latente.
+
 1. **PRIORIDAD ALTA — `AVANSAT_VERIFY_SSL=false`** (`backend/.env`,
    `backend/.env.prod`, default en `app/core/config.py:34`): la
    verificación TLS está deshabilitada al llamar a Avansat, un proveedor

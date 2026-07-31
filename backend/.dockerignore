@@ -1,0 +1,22 @@
+# Secretos: NUNCA dentro de la imagen. El Dockerfile hace "COPY . ." y sin
+# este archivo, .env y .env.prod (credenciales reales de Postgres, SMTP,
+# Avansat y SECRET_KEY) quedaban embebidos en texto plano en cada imagen
+# construida -- recuperables con un simple "docker run ... cat /app/.env.prod".
+# La configuracion real se inyecta por variables de entorno (ver
+# docker-compose*.yml), nunca por archivo copiado a la imagen.
+.env
+.env.*
+# .env.example si se conserva: son valores de ejemplo, sin secretos, y sirve
+# como referencia de que variables espera la app.
+!.env.example
+
+# Caches de Python: basura de build, ademas invalidan la cache de capas de
+# Docker sin razon.
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.pytest_cache/
+
+# Nada de esto se necesita en runtime.
+README.md

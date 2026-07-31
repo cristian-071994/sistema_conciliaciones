@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Sistema de Conciliacion Cointra"
+    app_name: str = "Refrigerados API"
     secret_key: str = "dev_secret_change_me"
     access_token_expire_minutes: int = 480
     database_url: str | None = None
