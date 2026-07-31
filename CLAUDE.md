@@ -420,6 +420,45 @@ El super admin puede ver en tiempo real qué usuarios están conectados al siste
 
 ---
 
+## Deuda Técnica / Pendientes
+
+- **Sin validación de tamaño de archivo en `UploadFile`.** Los endpoints
+  que reciben archivos (`backend/app/api/routes/conciliaciones_workflow.py`
+  — adjuntos de factura, `archivos_factura: list[UploadFile]` — y
+  `backend/app/api/routes/viajes.py` — carga masiva de Excel, `file:
+  UploadFile` en `/carga-masiva/preview` y `/carga-masiva`) no validan el
+  tamaño del archivo recibido en ningún punto del código, ni en el
+  backend ni en el frontend (sin chequeo de `file.size` en ningún
+  componente). Detectado el 2026-07-31 al definir
+  `client_max_body_size` en el reverse proxy de `conciliaciones_gateway`
+  — ese límite es de infraestructura (nginx, hoy 20M), no reemplaza una
+  validación real de la aplicación (mensaje de error claro al usuario,
+  límite explícito y documentado, protección aunque el archivo llegue
+  por otra vía que no pase por ese proxy). Pendiente de implementar,
+  no se actúa todavía.
+
+### Para la fase de despliegue en servidor (en orden de prioridad)
+
+1. **PRIORIDAD ALTA — `AVANSAT_VERIFY_SSL=false`** (`backend/.env`,
+   `backend/.env.prod`, default en `app/core/config.py:34`): la
+   verificación TLS está deshabilitada al llamar a Avansat, un proveedor
+   externo real — riesgo de MITM sobre credenciales y datos de
+   manifiestos. Es más urgente que el resto de esta lista porque es una
+   protección de seguridad activamente apagada en producción hoy, no
+   solo una mala práctica latente. Resolver (habilitar verificación, o
+   documentar por qué el certificado de Avansat no valida y fijar el CA
+   correspondiente) ANTES de montar el despliegue unificado.
+2. **Secretos en texto plano** en `backend/.env.prod` y duplicados en
+   `docker-compose.prod.yml` (Postgres, SMTP, Avansat, SECRET_KEY) —
+   definir mecanismo de secretos para el servidor compartido.
+3. **Vulnerabilidades de `npm audit` del frontend de Anticipos** (4,
+   requieren salto de versión mayor de `vite`/`react-router-dom` —
+   documentadas en el CLAUDE.md de ese repo, Fase 16). Menor urgencia:
+   sin exploit conocido aplicable al uso actual, pero resolver antes de
+   exponer el dominio unificado.
+
+---
+
 ## Documentación Adicional
 
 Leer antes de hacer cambios en lógica de negocio:

@@ -2,6 +2,12 @@ import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, 
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
+// Clave PROPIA de este sistema, nunca "token" a secas: bajo el dominio
+// compartido (conciliaciones.cointra.com.co), Refrigerados y Anticipos
+// viven en el MISMO origen y comparten localStorage -- con la misma clave,
+// cada login/logout de un sistema pisaba o borraba la sesion del otro.
+export const TOKEN_STORAGE_KEY = "refrigerados_token";
+
 let unauthorizedHandler: (() => void) | null = null;
 
 export function setUnauthorizedHandler(handler: (() => void) | null) {
@@ -13,7 +19,7 @@ async function request<T>(
   options: RequestInit = {},
   config: { skipUnauthorizedHandler?: boolean } = {}
 ): Promise<T> {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -156,14 +162,14 @@ export const api = {
     request<{ ok: boolean }>(`/catalogs/operaciones/${id}/reactivar`, {
       method: "POST",
     }),
-  conciliaciones: () => request<Conciliacion[]>("/conciliaciones"),
+  conciliaciones: () => request<Conciliacion[]>("/conciliaciones/"),
   crearConciliacion: (payload: {
     operacion_id: number;
     nombre: string;
     fecha_inicio: string;
     fecha_fin: string;
   }) =>
-    request<Conciliacion>("/conciliaciones", {
+    request<Conciliacion>("/conciliaciones/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -256,7 +262,7 @@ export const api = {
       method: "POST",
     }),
   previewCargaMasivaViajes: async (operacionId: number, file: File): Promise<CargaMasivaFilaPreview[]> => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const form = new FormData();
     form.append("operacion_id", String(operacionId));
     form.append("file", file);
@@ -277,7 +283,7 @@ export const api = {
     return response.json() as Promise<CargaMasivaFilaPreview[]>;
   },
   ejecutarCargaMasivaViajes: async (operacionId: number, file: File): Promise<CargaMasivaResultado> => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const form = new FormData();
     form.append("operacion_id", String(operacionId));
     form.append("file", file);
@@ -298,7 +304,7 @@ export const api = {
     return response.json() as Promise<CargaMasivaResultado>;
   },
   descargarPlantillaViajes: async (): Promise<Blob> => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     const response = await fetch(`${API_URL}/viajes/plantilla-excel`, { headers });
@@ -391,7 +397,7 @@ export const api = {
       archivos_factura: File[];
     }
   ) => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const form = new FormData();
     if (payload.destinatario_email) form.append("destinatario_email", payload.destinatario_email);
     if (payload.cc_emails) form.append("cc_emails", payload.cc_emails);
@@ -427,7 +433,7 @@ export const api = {
     return response.json() as Promise<Conciliacion>;
   },
   descargarFacturasConciliacion: async (conciliacionId: number): Promise<Blob> => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     const response = await fetch(`${API_URL}/conciliaciones/${conciliacionId}/descargar-facturas`, {
@@ -453,7 +459,7 @@ export const api = {
     return response.blob();
   },
   descargarConciliacionExcel: async (conciliacionId: number): Promise<Blob> => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     const response = await fetch(`${API_URL}/conciliaciones/${conciliacionId}/descargar-excel`, {

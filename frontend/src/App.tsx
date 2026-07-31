@@ -16,7 +16,7 @@ import { UsuariosPage } from "./pages/UsuariosPage";
 import { VehiculosPage } from "./pages/VehiculosPage";
 import { ServiciosPage } from "./pages/ServiciosPage";
 import { CatalogoTarifasPage } from "./pages/CatalogoTarifasPage";
-import { api, setUnauthorizedHandler } from "./services/api";
+import { api, setUnauthorizedHandler, TOKEN_STORAGE_KEY } from "./services/api";
 import { Conciliacion, Notificacion, Operacion, User } from "./types";
 
 export function App() {
@@ -40,7 +40,7 @@ export function App() {
   }, [location.pathname, location.search]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem("token");
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     setUser(null);
     setOperaciones([]);
     setConciliaciones([]);
@@ -146,7 +146,7 @@ export function App() {
   }, [handleLogout]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     if (!token) {
       setAuthChecked(true);
       return;
@@ -159,7 +159,7 @@ export function App() {
         await loadInitialData();
       })
       .catch(() => {
-        localStorage.removeItem("token");
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
       })
       .finally(() => {
         setAuthChecked(true);
@@ -168,7 +168,7 @@ export function App() {
 
   async function handleLogin(email: string, password: string) {
     const token = await api.login(email, password);
-    localStorage.setItem("token", token.access_token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, token.access_token);
     const me = await api.me();
     setUser(me);
     await loadInitialData();
