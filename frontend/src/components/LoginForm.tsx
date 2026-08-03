@@ -90,6 +90,19 @@ export function LoginForm({ onLogin }: Props) {
           Olvide mi contraseña
         </Link>
       </p>
+
+      {/* <a> crudo a proposito, NO <Link>: el BrowserRouter monta con
+          basename del subpath (/refrigerados), asi que <Link to="/">
+          resolveria a /refrigerados/ y dejaria al usuario dentro de este
+          mismo modulo. El href absoluto si sale del subpath y llega al
+          landing del gateway, en la raiz real del dominio. Relativo sin
+          dominio ni puerto: el navegador lo resuelve contra el origen
+          actual, asi funciona igual en local y en produccion. */}
+      <p className="text-sm text-neutral">
+        <a href="/" className="font-medium text-emerald-700 hover:text-emerald-800">
+          Volver al inicio
+        </a>
+      </p>
     </form>
   );
 }
