@@ -12,6 +12,36 @@ export interface User {
   tercero_id?: number | null;
   operacion_ids?: number[];
   activo: boolean;
+  permisos?: string[];
+}
+
+export type EstadoConexion = "en_linea" | "inactivo" | "no_conectado";
+
+export interface UsuarioPresence {
+  id: number;
+  nombre: string;
+  email: string;
+  rol: UserRole;
+  activo: boolean;
+  ultimo_heartbeat: string | null;
+  estado_conexion: EstadoConexion;
+}
+
+export interface Permiso {
+  id: number;
+  clave: string;
+  categoria: string;
+  descripcion: string;
+}
+
+export interface Rol {
+  id: number;
+  nombre: string;
+  descripcion: string | null;
+  es_superadmin: boolean;
+  es_sistema: boolean;
+  permiso_claves: string[];
+  usuarios_count: number;
 }
 
 export interface LoginResponse {
@@ -134,6 +164,9 @@ export interface Viaje {
   activo: boolean;
   created_by: number;
   created_at: string;
+  // Solo presente cuando el viaje se originó desde una solicitud de viaje
+  // adicional (app móvil / web) que ya tiene el PDF del manifiesto adjunto.
+  viaje_adicional_solicitud_id?: number | null;
 }
 
 export interface Servicio {
@@ -149,9 +182,15 @@ export interface CatalogoTarifa {
   id: number;
   servicio_id: number;
   tipo_vehiculo_id: number;
-  tarifa_cliente: number;
-  rentabilidad_pct: number;
-  tarifa_tercero: number;
+  // Solo aplican al servicio VIAJE_ADICIONAL — null para el resto.
+  origen?: string | null;
+  destino?: string | null;
+  // El backend oculta estos tres según el rol de quien consulta (Cliente
+  // solo ve tarifa_cliente, Tercero solo tarifa_tercero, rentabilidad_pct
+  // es exclusivo de Cointra) — ver sanitize_item_for_role / _to_out.
+  tarifa_cliente: number | null;
+  rentabilidad_pct: number | null;
+  tarifa_tercero: number | null;
   activo: boolean;
   updated_by: number;
   servicio_nombre?: string | null;
@@ -348,6 +387,64 @@ export interface DashboardPlacaDesglose {
   viajes_cliente: number;
   disponibilidad_cliente: number;
   total_cliente: number;
+}
+
+export interface VehiculoDisponible {
+  id: number;
+  placa: string;
+  tipo_vehiculo_id: number;
+  tipo_vehiculo_nombre: string;
+}
+
+// Ruta con tarifa activa para Viaje Adicional, sin montos — alimenta los
+// desplegables de origen/destino del formulario del cliente.
+export interface RutaTarifa {
+  origen: string;
+  destino: string;
+  tipo_vehiculo_id: number;
+  tipo_vehiculo_nombre: string;
+}
+
+export interface ManifiestoViajeAdicional {
+  id: number;
+  numero_manifiesto: string | null;
+  filename: string;
+  created_at: string;
+}
+
+export interface SolicitudViajeAdicional {
+  id: number;
+  operacion_id: number;
+  operacion_nombre: string;
+  cliente_id: number;
+  cliente_nombre: string;
+  vehiculo_id: number;
+  vehiculo_placa: string;
+  vehiculo_tipo_nombre: string;
+  titulo: string;
+  fecha_viaje: string;
+  origen: string;
+  destino: string;
+  producto: string;
+  observaciones: string | null;
+  tarifa_tercero: number | null;
+  tarifa_cliente: number | null;
+  rentabilidad: number | null;
+  estado: "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO";
+  estado_gestion:
+    | "PENDIENTE_TARIFA"
+    | "PENDIENTE_MANIFIESTO"
+    | "SIN_CONCILIAR"
+    | "EN_BORRADOR"
+    | "EN_REVISION"
+    | "APROBADA"
+    | "CONCILIADO";
+  created_by: number;
+  creador_nombre: string;
+  created_at: string;
+  activo: boolean;
+  manifiesto: ManifiestoViajeAdicional | null;
+  viaje_id: number | null;
 }
 
 export interface DashboardIndicators {

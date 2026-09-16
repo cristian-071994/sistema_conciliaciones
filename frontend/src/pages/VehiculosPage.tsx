@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import type { Tercero, TipoVehiculo, User, Vehiculo } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -45,7 +46,13 @@ export function VehiculosPage({ user }: Props) {
     | null
   >(null);
 
-  const isCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  // Un Tercero siempre puede registrar sus propios vehiculos y proponer tipos
+  // (regla de negocio fija); un Cointra necesita el permiso correspondiente.
+  const puedeCrearVehiculo = user.rol === "TERCERO" || hasPermiso(user, "vehiculos.crear");
+  const puedeDesactivarVehiculo = hasPermiso(user, "vehiculos.desactivar");
+  const puedeCrearTipo = user.rol === "TERCERO" || hasPermiso(user, "tipos_vehiculo.crear");
+  const puedeDesactivarTipo = hasPermiso(user, "tipos_vehiculo.desactivar");
+  const mostrarSeccionTipos = puedeCrearTipo || puedeDesactivarTipo;
   const tiposActivos = useMemo(() => tipos.filter((t) => t.activo), [tipos]);
   const tercerosDisponibles = useMemo(() => {
     if (user.rol === "TERCERO" && user.tercero_id) {
@@ -115,7 +122,12 @@ export function VehiculosPage({ user }: Props) {
   }
 
   async function onConfirmAction() {
-    if (!confirmModal || !isCointraAdmin) return;
+    if (!confirmModal) return;
+    if (confirmModal.type === "inactivarVehiculo" || confirmModal.type === "reactivarVehiculo") {
+      if (!puedeDesactivarVehiculo) return;
+    } else if (!puedeDesactivarTipo) {
+      return;
+    }
     if (confirmModal.type === "inactivarVehiculo") {
       await api.eliminarVehiculo(confirmModal.id);
     } else if (confirmModal.type === "reactivarVehiculo") {
@@ -156,6 +168,7 @@ export function VehiculosPage({ user }: Props) {
           Registra las placas y tipos de vehículo para utilizarlos al cargar viajes.
         </p>
 
+        {puedeCrearVehiculo && (
         <form
           onSubmit={handleCreateVehiculo}
           className="grid grid-cols-1 gap-3 md:grid-cols-[1.2fr,1fr,1.2fr,auto]"
@@ -224,6 +237,7 @@ export function VehiculosPage({ user }: Props) {
             </button>
           </div>
         </form>
+        )}
       </section>
 
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
@@ -276,7 +290,7 @@ export function VehiculosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Tipo</th>
                   <th className="border-b border-border px-3 py-2 text-left">Propietario</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  {isCointraAdmin && (
+                  {puedeDesactivarVehiculo && (
                     <th className="border-b border-border px-3 py-2 text-left">Acción</th>
                   )}
                 </tr>
@@ -292,7 +306,7 @@ export function VehiculosPage({ user }: Props) {
                         {v.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    {isCointraAdmin && (
+                    {puedeDesactivarVehiculo && (
                       <td className="px-3 py-2">
                         <button
                           type="button"
@@ -319,36 +333,38 @@ export function VehiculosPage({ user }: Props) {
           </div>
         )}
       </section>
-      {isCointraAdmin && (
+      {mostrarSeccionTipos && (
         <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
           <h3 className="mb-3 text-sm font-semibold text-slate-900">Tipos de vehículo</h3>
           <p className="mb-4 text-xs text-neutral">
-            Solo visible para Cointra Admin. Gestiona los tipos disponibles al registrar vehículos.
+            Gestiona los tipos disponibles al registrar vehículos.
           </p>
-          <form
-            onSubmit={(e) => void handleCreateTipo(e)}
-            className="mb-4 flex items-end gap-3"
-          >
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                Nombre del tipo
-              </label>
-              <input
-                name="nombre"
-                required
-                value={tipoNombre}
-                onChange={(e) => setTipoNombre(e.target.value)}
-                placeholder="Ej. Tractomula"
-                className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
-            <button
-              type="submit"
-              className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
+          {puedeCrearTipo && (
+            <form
+              onSubmit={(e) => void handleCreateTipo(e)}
+              className="mb-4 flex items-end gap-3"
             >
-              Agregar tipo
-            </button>
-          </form>
+              <div className="flex-1">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                  Nombre del tipo
+                </label>
+                <input
+                  name="nombre"
+                  required
+                  value={tipoNombre}
+                  onChange={(e) => setTipoNombre(e.target.value)}
+                  placeholder="Ej. Tractomula"
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
+              >
+                Agregar tipo
+              </button>
+            </form>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-sm">
               <thead>
@@ -356,7 +372,7 @@ export function VehiculosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">ID</th>
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Acción</th>
+                  {puedeDesactivarTipo && <th className="border-b border-border px-3 py-2 text-left">Acción</th>}
                 </tr>
               </thead>
               <tbody>
@@ -373,24 +389,26 @@ export function VehiculosPage({ user }: Props) {
                         {t.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmModal({
-                            type: t.activo ? "inactivarTipo" : "reactivarTipo",
-                            id: t.id,
-                          })
-                        }
-                        className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
-                          t.activo
-                            ? "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
-                            : "border-success/40 bg-success/10 text-success hover:bg-success/20"
-                        }`}
-                      >
-                        {t.activo ? "Inactivar" : "Reactivar"}
-                      </button>
-                    </td>
+                    {puedeDesactivarTipo && (
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirmModal({
+                              type: t.activo ? "inactivarTipo" : "reactivarTipo",
+                              id: t.id,
+                            })
+                          }
+                          className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                            t.activo
+                              ? "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
+                              : "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                          }`}
+                        >
+                          {t.activo ? "Inactivar" : "Reactivar"}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

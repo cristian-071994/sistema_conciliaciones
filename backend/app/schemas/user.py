@@ -14,6 +14,7 @@ class UserOut(ORMModel):
     tercero_id: int | None = None
     activo: bool
     operacion_ids: list[int] = []
+    permisos: list[str] = []
 
 
 class UserCreate(BaseModel):

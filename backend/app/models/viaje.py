@@ -10,12 +10,12 @@ class Viaje(Base):
     __tablename__ = "viajes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    operacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("operaciones.id"), nullable=False)
-    tercero_id: Mapped[int] = mapped_column(Integer, ForeignKey("terceros.id"), nullable=False)
+    operacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("operaciones.id"), nullable=False, index=True)
+    tercero_id: Mapped[int] = mapped_column(Integer, ForeignKey("terceros.id"), nullable=False, index=True)
     servicio_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("servicios.id"), nullable=True)
-    conciliacion_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliaciones.id"), nullable=True)
+    conciliacion_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliaciones.id"), nullable=True, index=True)
     titulo: Mapped[str] = mapped_column(String(255), nullable=False)
-    fecha_servicio: Mapped[date] = mapped_column(Date, nullable=False)
+    fecha_servicio: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     origen: Mapped[str] = mapped_column(String(255), nullable=False)
     destino: Mapped[str] = mapped_column(String(255), nullable=False)
     placa: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -31,7 +31,7 @@ class Viaje(Base):
     cargado_por: Mapped[str] = mapped_column(String(20), nullable=False)
     conciliado: Mapped[bool] = mapped_column(Boolean, default=False)
     estado_conciliacion: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

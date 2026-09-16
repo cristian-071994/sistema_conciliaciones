@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import type { Cliente, User } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -10,7 +11,10 @@ interface Props {
 
 export function ClientesPage({ user }: Props) {
   const soloCointra = user.rol === "COINTRA";
-  const soloCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const puedeCrear = hasPermiso(user, "clientes.crear");
+  const puedeEditar = hasPermiso(user, "clientes.editar");
+  const puedeDesactivar = hasPermiso(user, "clientes.desactivar");
+  const puedeGestionar = puedeEditar || puedeDesactivar;
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -106,32 +110,34 @@ export function ClientesPage({ user }: Props) {
           {error && <p className="text-sm font-medium text-danger">{error}</p>}
           {success && <p className="text-sm font-medium text-success">{success}</p>}
 
-          <form className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-3" onSubmit={onCreate}>
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Nombre</label>
-              <input
-                name="nombre"
-                required
-                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">NIT</label>
-              <input
-                name="nit"
-                required
-                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
-            <div className="md:col-span-3">
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
-              >
-                Crear cliente
-              </button>
-            </div>
-          </form>
+          {puedeCrear && (
+            <form className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-3" onSubmit={onCreate}>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Nombre</label>
+                <input
+                  name="nombre"
+                  required
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">NIT</label>
+                <input
+                  name="nit"
+                  required
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
+                >
+                  Crear cliente
+                </button>
+              </div>
+            </form>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-sm">
@@ -141,7 +147,7 @@ export function ClientesPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">NIT</th>
                   <th className="border-b border-border px-3 py-2 text-left">Activo</th>
-                  {soloCointraAdmin && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
+                  {puedeGestionar && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -151,19 +157,21 @@ export function ClientesPage({ user }: Props) {
                     <td className="px-3 py-2">{c.nombre}</td>
                     <td className="px-3 py-2">{c.nit}</td>
                     <td className="px-3 py-2">{c.activo ? "Sí" : "No"}</td>
-                    {soloCointraAdmin && (
+                    {puedeGestionar && (
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditModal({ id: c.id, nombre: c.nombre, nit: c.nit })
-                            }
-                            className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Editar
-                          </button>
-                          {c.activo && (
+                          {puedeEditar && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditModal({ id: c.id, nombre: c.nombre, nit: c.nit })
+                              }
+                              className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivar && c.activo && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: c.id, action: "inactivar" })}
@@ -172,7 +180,7 @@ export function ClientesPage({ user }: Props) {
                               Inactivar
                             </button>
                           )}
-                          {!c.activo && (
+                          {puedeDesactivar && !c.activo && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: c.id, action: "reactivar" })}

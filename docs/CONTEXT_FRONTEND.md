@@ -28,7 +28,11 @@
 - /clientes
 - /terceros
 - /usuarios
+- /roles
+- /viajes-adicionales
 - /cambiar-password
+
+Las rutas /avansat, /servicios, /catalogo-tarifas, /usuarios y /roles están gateadas por permiso administrativo (componente `RequirePermiso` en App.tsx), no por rol fijo — ver sección de permisos en CLAUDE.md.
 
 ## Comportamiento clave
 - Autenticacion persistente con token en localStorage.
@@ -39,7 +43,7 @@
 
 ## Configuracion
 - Variable principal: VITE_API_URL
-- Valor local esperado: http://127.0.0.1:8000/api
+- Valor local esperado: http://127.0.0.1:8001/api
 
 ## Compatibilidad con contenedores
 En despliegue por contenedores, VITE_API_URL debe apuntar al servicio backend dentro de la red interna.

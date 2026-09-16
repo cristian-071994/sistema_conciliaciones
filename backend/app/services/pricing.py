@@ -1,9 +1,27 @@
 from app.models.conciliacion_item import ConciliacionItem
 from app.models.operacion import Operacion
 
+# % de rentabilidad por defecto para calcular tarifa_cliente A PARTIR de
+# tarifa_tercero (la tarifa que pone el tercero manda) cuando un viaje entra
+# a una conciliación — independiente del % configurado en la operación. El
+# usuario puede ajustar el % manualmente después, ya dentro de la
+# conciliación (ver PATCH .../items/{id} en conciliaciones_items.py).
+DEFAULT_RENTABILIDAD_PCT = 10.0
+
 
 def calculate_tarifa_cliente(tarifa_tercero: float, operacion: Operacion) -> tuple[float, float]:
     pct = float(operacion.porcentaje_rentabilidad or 0)
+    divisor = 1 - (pct / 100)
+    if divisor <= 0:
+        return float(tarifa_tercero), pct
+    return float(tarifa_tercero) / divisor, pct
+
+
+def calculate_tarifa_cliente_default(
+    tarifa_tercero: float, pct: float = DEFAULT_RENTABILIDAD_PCT
+) -> tuple[float, float]:
+    """Igual que calculate_tarifa_cliente pero con el % fijo por defecto en
+    vez del % de una operación específica."""
     divisor = 1 - (pct / 100)
     if divisor <= 0:
         return float(tarifa_tercero), pct

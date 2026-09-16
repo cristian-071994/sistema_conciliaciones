@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import type { Cliente, Operacion, Tercero, User } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -10,7 +11,15 @@ interface Props {
 
 export function OperacionesPage({ user }: Props) {
   const soloCointra = user.rol === "COINTRA";
-  const soloCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const puedeCrear = hasPermiso(user, "operaciones.crear");
+  const puedeEditar = hasPermiso(user, "operaciones.editar");
+  // Permiso independiente de "operaciones.editar": permite ajustar el % de
+  // rentabilidad sin dar acceso a editar el resto de los campos de la
+  // operación (y viceversa).
+  const puedeRentabilidad = hasPermiso(user, "operaciones.rentabilidad");
+  const puedeDesactivar = hasPermiso(user, "operaciones.desactivar");
+  const puedeAbrirEditar = puedeEditar || puedeRentabilidad;
+  const puedeGestionar = puedeAbrirEditar || puedeDesactivar;
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [terceros, setTerceros] = useState<Tercero[]>([]);
   const [operaciones, setOperaciones] = useState<Operacion[]>([]);
@@ -138,11 +147,15 @@ export function OperacionesPage({ user }: Props) {
     setError("");
     setSuccess("");
     try {
-      await api.editarOperacion(editModal.id, {
-        nombre: editModal.nombre.trim(),
-        porcentaje_rentabilidad: Number(editModal.porcentaje),
-        cliente_usuario_ids: editModal.cliente_usuario_ids,
-      });
+      if (puedeEditar) {
+        await api.editarOperacion(editModal.id, {
+          nombre: editModal.nombre.trim(),
+          cliente_usuario_ids: editModal.cliente_usuario_ids,
+        });
+      }
+      if (puedeRentabilidad) {
+        await api.editarOperacionRentabilidad(editModal.id, Number(editModal.porcentaje));
+      }
       await loadData();
       setSuccess("Operación actualizada exitosamente.");
       setEditModal(null);
@@ -191,6 +204,7 @@ export function OperacionesPage({ user }: Props) {
             Puedes asociar muchas operaciones al mismo cliente y al mismo tercero: cada operación nueva que crees queda vinculada a ambos.
           </p>
 
+          {puedeCrear && (
           <form
             className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-2"
             onSubmit={onCreate}
@@ -281,6 +295,7 @@ export function OperacionesPage({ user }: Props) {
               </p>
             </div>
           </form>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-sm">
@@ -293,7 +308,7 @@ export function OperacionesPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Usuarios cliente</th>
                   <th className="border-b border-border px-3 py-2 text-left">Rentabilidad %</th>
                   <th className="border-b border-border px-3 py-2 text-left">Activa</th>
-                  {soloCointraAdmin && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
+                  {puedeGestionar && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -306,17 +321,19 @@ export function OperacionesPage({ user }: Props) {
                     <td className="px-3 py-2">{op.cliente_usuario_ids?.length ?? 0}</td>
                     <td className="px-3 py-2">{op.porcentaje_rentabilidad}%</td>
                     <td className="px-3 py-2">{op.activa ? "Sí" : "No"}</td>
-                    {soloCointraAdmin && (
+                    {puedeGestionar && (
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void openEditOperacion(op)}
-                            className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Editar
-                          </button>
-                          {op.activa && (
+                          {puedeAbrirEditar && (
+                            <button
+                              type="button"
+                              onClick={() => void openEditOperacion(op)}
+                              className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivar && op.activa && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: op.id, action: "inactivar" })}
@@ -325,7 +342,7 @@ export function OperacionesPage({ user }: Props) {
                               Inactivar
                             </button>
                           )}
-                          {!op.activa && (
+                          {puedeDesactivar && !op.activa && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: op.id, action: "reactivar" })}
@@ -377,40 +394,46 @@ export function OperacionesPage({ user }: Props) {
         onClose={() => setEditModal(null)}
         onConfirm={onEditConfirm}
       >
-        <input
-          value={editModal?.nombre ?? ""}
-          onChange={(e) =>
-            setEditModal((prev) => (prev ? { ...prev, nombre: e.target.value } : prev))
-          }
-          placeholder="Nombre"
-          className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-        />
-        <input
-          value={editModal?.porcentaje ?? ""}
-          onChange={(e) =>
-            setEditModal((prev) => (prev ? { ...prev, porcentaje: e.target.value } : prev))
-          }
-          type="number"
-          step="0.01"
-          min={0}
-          max={99.99}
-          placeholder="Rentabilidad %"
-          className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-        />
-        <select
-          multiple
-          value={(editModal?.cliente_usuario_ids ?? []).map(String)}
-          onChange={(e) => {
-            const values = Array.from(e.target.selectedOptions).map((opt) => Number(opt.value));
-            setEditModal((prev) => (prev ? { ...prev, cliente_usuario_ids: values } : prev));
-          }}
-          disabled={!editModal || editClienteUsers.length === 0}
-          className="h-28 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:bg-slate-100"
-        >
-          {editClienteUsers.map((u) => (
-            <option key={u.id} value={u.id}>{u.nombre} ({u.email})</option>
-          ))}
-        </select>
+        {puedeEditar && (
+          <input
+            value={editModal?.nombre ?? ""}
+            onChange={(e) =>
+              setEditModal((prev) => (prev ? { ...prev, nombre: e.target.value } : prev))
+            }
+            placeholder="Nombre"
+            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+        )}
+        {puedeRentabilidad && (
+          <input
+            value={editModal?.porcentaje ?? ""}
+            onChange={(e) =>
+              setEditModal((prev) => (prev ? { ...prev, porcentaje: e.target.value } : prev))
+            }
+            type="number"
+            step="0.01"
+            min={0}
+            max={99.99}
+            placeholder="Rentabilidad %"
+            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+        )}
+        {puedeEditar && (
+          <select
+            multiple
+            value={(editModal?.cliente_usuario_ids ?? []).map(String)}
+            onChange={(e) => {
+              const values = Array.from(e.target.selectedOptions).map((opt) => Number(opt.value));
+              setEditModal((prev) => (prev ? { ...prev, cliente_usuario_ids: values } : prev));
+            }}
+            disabled={!editModal || editClienteUsers.length === 0}
+            className="h-28 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:bg-slate-100"
+          >
+            {editClienteUsers.map((u) => (
+              <option key={u.id} value={u.id}>{u.nombre} ({u.email})</option>
+            ))}
+          </select>
+        )}
       </ActionModal>
 
       <ActionModal

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ActionModal } from "./components/common/ActionModal";
 import { LoginForm } from "./components/LoginForm";
 import { Layout } from "./components/layout/Layout";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { LandingPage } from "./pages/LandingPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DashboardHomePage } from "./pages/DashboardHomePage";
@@ -16,8 +17,45 @@ import { UsuariosPage } from "./pages/UsuariosPage";
 import { VehiculosPage } from "./pages/VehiculosPage";
 import { ServiciosPage } from "./pages/ServiciosPage";
 import { CatalogoTarifasPage } from "./pages/CatalogoTarifasPage";
+import { RolesPage } from "./pages/RolesPage";
+import { ViajesAdicionalesPage } from "./pages/ViajesAdicionalesPage";
+import { useHeartbeat } from "./hooks/useHeartbeat";
 import { api, setUnauthorizedHandler, TOKEN_STORAGE_KEY } from "./services/api";
 import { Conciliacion, Notificacion, Operacion, User } from "./types";
+import { hasAlgunPermiso } from "./utils/permisos";
+
+// Rutas cuyo listado ya está gateado por un permiso en el backend (ver
+// PERMISSION_NAV_ITEMS en Sidebar.tsx) — si el usuario entra por URL directa
+// sin el permiso, lo mandamos a /dashboard en vez de dejarlo en una página
+// que de todos modos va a fallar contra la API.
+const RUTAS_CON_PERMISO: { path: string; permisos: string[] }[] = [
+  { path: "/servicios", permisos: ["servicios.crear", "servicios.editar", "servicios.desactivar"] },
+  {
+    path: "/catalogo-tarifas",
+    permisos: ["catalogo_tarifas.ver", "catalogo_tarifas.crear", "catalogo_tarifas.editar", "catalogo_tarifas.desactivar"],
+  },
+  { path: "/avansat", permisos: ["avansat.consultar", "avansat.sincronizar", "avansat.sincronizar_historico"] },
+  { path: "/usuarios", permisos: ["usuarios.ver", "usuarios.crear", "usuarios.editar", "usuarios.desactivar"] },
+  { path: "/roles", permisos: ["roles.ver", "roles.gestionar"] },
+];
+
+function RequirePermiso({ user, path, children }: { user: User; path: string; children: ReactNode }) {
+  const regla = RUTAS_CON_PERMISO.find((r) => r.path === path);
+  if (regla && !hasAlgunPermiso(user, regla.permisos)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+}
+
+function AuthCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-md rounded-2xl border border-emerald-100 bg-white/92 p-8 shadow-lg shadow-emerald-900/10">
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -31,6 +69,7 @@ export function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  useHeartbeat(!!user);
   const queryOpenConciliacionId = useMemo(() => {
     if (location.pathname !== "/conciliaciones") return null;
     const raw = new URLSearchParams(location.search).get("open_conciliacion_id");
@@ -40,6 +79,7 @@ export function App() {
   }, [location.pathname, location.search]);
 
   const handleLogout = useCallback(() => {
+    void api.presenceLogout().catch(() => null);
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setUser(null);
     setOperaciones([]);
@@ -187,16 +227,34 @@ export function App() {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-        <div className="w-full max-w-md rounded-2xl border border-emerald-100 bg-white/92 p-8 shadow-lg shadow-emerald-900/10">
-          <Routes>
-            <Route path="/login" element={<LoginForm onLogin={handleLogin} />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
-            <Route path="*" element={<Navigate to="/login" replace />} />
-          </Routes>
-        </div>
-      </div>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/login"
+          element={
+            <AuthCard>
+              <LoginForm onLogin={handleLogin} />
+            </AuthCard>
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={
+            <AuthCard>
+              <ForgotPasswordPage />
+            </AuthCard>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <AuthCard>
+              <ResetPasswordPage />
+            </AuthCard>
+          }
+        />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
@@ -252,13 +310,50 @@ export function App() {
           }
         />
         <Route path="/operaciones" element={<OperacionesPage user={user} />} />
-        <Route path="/avansat" element={<AvansatPage user={user} />} />
+        <Route
+          path="/avansat"
+          element={
+            <RequirePermiso user={user} path="/avansat">
+              <AvansatPage user={user} />
+            </RequirePermiso>
+          }
+        />
         <Route path="/vehiculos" element={<VehiculosPage user={user} />} />
-        <Route path="/servicios" element={<ServiciosPage user={user} />} />
-        <Route path="/catalogo-tarifas" element={<CatalogoTarifasPage user={user} />} />
+        <Route
+          path="/servicios"
+          element={
+            <RequirePermiso user={user} path="/servicios">
+              <ServiciosPage user={user} />
+            </RequirePermiso>
+          }
+        />
+        <Route
+          path="/catalogo-tarifas"
+          element={
+            <RequirePermiso user={user} path="/catalogo-tarifas">
+              <CatalogoTarifasPage user={user} />
+            </RequirePermiso>
+          }
+        />
         <Route path="/clientes" element={<ClientesPage user={user} />} />
         <Route path="/terceros" element={<TercerosPage user={user} />} />
-        <Route path="/usuarios" element={<UsuariosPage user={user} />} />
+        <Route
+          path="/usuarios"
+          element={
+            <RequirePermiso user={user} path="/usuarios">
+              <UsuariosPage user={user} />
+            </RequirePermiso>
+          }
+        />
+        <Route
+          path="/roles"
+          element={
+            <RequirePermiso user={user} path="/roles">
+              <RolesPage user={user} />
+            </RequirePermiso>
+          }
+        />
+        <Route path="/viajes-adicionales" element={<ViajesAdicionalesPage user={user} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

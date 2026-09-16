@@ -75,15 +75,17 @@ def _resolve_period(mode: str, year: int | None, month: int | None) -> tuple[dat
         target_month = int(month or today.month)
         target_month = max(1, min(12, target_month))
         start = date(target_year, target_month, 1)
-        if target_year == today.year and target_month == today.month:
-            end = today
-        else:
-            end = date(target_year, target_month, monthrange(target_year, target_month)[1])
+        # Mes completo (no se corta en "hoy"): un viaje programado para mas
+        # adelante en el mismo mes es un servicio real ya cargado al sistema
+        # y debe contar en las estadisticas de ese mes, se haya realizado o no.
+        end = date(target_year, target_month, monthrange(target_year, target_month)[1])
         return start, end, f"{MESES_ES[target_month].capitalize()} {target_year}"
 
-    # current_month por defecto
+    # current_month por defecto — mismo criterio: mes completo, no solo lo
+    # transcurrido hasta hoy (ver comentario arriba).
     start = date(today.year, today.month, 1)
-    return start, today, f"{MESES_ES[today.month].capitalize()} {today.year} (actual)"
+    end = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    return start, end, f"{MESES_ES[today.month].capitalize()} {today.year} (actual)"
 
 
 def _get_accessible_operacion_ids(db: Session, user: Usuario) -> list[int]:
@@ -110,6 +112,18 @@ def _get_accessible_operacion_ids(db: Session, user: Usuario) -> list[int]:
         return [row[0] for row in rows]
 
     return []
+
+
+def _aplicar_visibilidad_viajes_cliente(query, user: Usuario):
+    """Mismo filtro que GET /viajes: un Cliente nunca ve viajes que Cointra
+    todavia no formalizo (sin conciliacion, o conciliacion en BORRADOR) —
+    solo a partir de EN_REVISION. El dashboard debe aplicar exactamente esta
+    misma regla o sus KPIs (ingresos, servicios, pendientes) terminan
+    incluyendo dinero y conteos que el Cliente no puede ver ni auditar en
+    ningun otro lado del sistema, y el detalle al hacer clic sale vacio."""
+    if user.rol == UserRole.CLIENTE:
+        return query.filter(Viaje.estado_conciliacion.in_(["EN_REVISION", "APROBADA", "CERRADA"]))
+    return query
 
 
 def _safe_pct(numerator: float, denominator: float) -> float:
@@ -332,6 +346,53 @@ def _build_empty_payload(mode: str, start: date, end: date, period_label: str, p
     }
 
 
+def _sanitize_dashboard_payload_for_role(payload: dict, role: UserRole) -> None:
+    """Aplica la misma regla de visibilidad financiera de sanitize_item_for_role()
+    a los KPIs y a TODOS los charts del dashboard — no solo al bloque top-level de kpis.
+    CLIENTE nunca ve tarifa_tercero/rentabilidad; TERCERO nunca ve tarifa_cliente/rentabilidad.
+    """
+    if role == UserRole.COINTRA:
+        return
+
+    kpis = payload["kpis"]
+    charts = payload["charts"]
+
+    if role == UserRole.CLIENTE:
+        kpis["costos"] = 0
+        kpis["ganancia"] = 0
+        kpis["margen_pct"] = 0
+        for row in charts["serie"]:
+            row["costos"] = 0
+            row["ganancia"] = 0
+        for row in charts["costo_por_tipo"]:
+            row["costo"] = 0
+            row["ganancia"] = 0
+        for row in charts["top_operaciones"] + charts["top_placas"] + charts["top_clientes"] + charts["top_terceros"]:
+            row["costos"] = 0
+            row["ganancia"] = 0
+        for row in charts["placa_desglose"]:
+            row["viajes"] = 0
+            row["disponibilidad"] = 0
+            row["total"] = 0
+    elif role == UserRole.TERCERO:
+        kpis["ingresos"] = 0
+        kpis["ganancia"] = 0
+        kpis["margen_pct"] = 0
+        for row in charts["serie"]:
+            row["ingresos"] = 0
+            row["ganancia"] = 0
+        for row in charts["costo_por_tipo"]:
+            row["ingreso"] = 0
+            row["ganancia"] = 0
+        for row in charts["top_operaciones"] + charts["top_placas"] + charts["top_clientes"] + charts["top_terceros"]:
+            row["ingresos"] = 0
+            row["ganancia"] = 0
+        for row in charts["placa_desglose"]:
+            row["viajes_cliente"] = 0
+            row["disponibilidad_cliente"] = 0
+            row["total_cliente"] = 0
+
+
 @router.get("/indicadores")
 def dashboard_indicadores(
     mode: str = Query(default="current_month"),
@@ -390,58 +451,32 @@ def dashboard_indicadores(
     conc_ids = list(conc_ids_set)
     concs = [c for c in all_active_concs if c.id in conc_ids_set]
 
-    # Contar manifiestos distintos enlazados a ítems del período (excluye bloque 1)
-    manifest_numbers: set[str] = set()
-    for item, _op_id in items_rows:
-        if item.tipo == ItemTipo.OTRO:
-            try:
-                payload = json.loads((item.descripcion or "").strip())
-                if payload.get("kind") == "LIQUIDACION_CONTRATO_FIJO":
-                    continue
-            except Exception:
-                pass
-        if item.manifiesto_numero:
-            mn = str(item.manifiesto_numero).strip()
-            if mn:
-                manifest_numbers.add(mn)
-    manifiestos_count = len(manifest_numbers)
-
-    viajes_query = db.query(Viaje).filter(
-        Viaje.operacion_id.in_(operacion_ids),
-        Viaje.activo.is_(True),
-        Viaje.fecha_servicio >= start,
-        Viaje.fecha_servicio <= end,
+    viajes_query = _aplicar_visibilidad_viajes_cliente(
+        db.query(Viaje).filter(
+            Viaje.operacion_id.in_(operacion_ids),
+            Viaje.activo.is_(True),
+            Viaje.fecha_servicio >= start,
+            Viaje.fecha_servicio <= end,
+        ),
+        user,
     )
     viajes = viajes_query.all()
 
-    prev_viajes_query = db.query(Viaje).filter(
-        Viaje.operacion_id.in_(operacion_ids),
-        Viaje.activo.is_(True),
-        Viaje.fecha_servicio >= prev_start,
-        Viaje.fecha_servicio <= prev_end,
+    prev_viajes_query = _aplicar_visibilidad_viajes_cliente(
+        db.query(Viaje).filter(
+            Viaje.operacion_id.in_(operacion_ids),
+            Viaje.activo.is_(True),
+            Viaje.fecha_servicio >= prev_start,
+            Viaje.fecha_servicio <= prev_end,
+        ),
+        user,
     )
     prev_viajes = prev_viajes_query.all()
 
     viajes_summary = _summarize_viajes(viajes)
     prev_viajes_summary = _summarize_viajes(prev_viajes)
 
-    # Items del período anterior — misma lógica por fecha_servicio
-    if cliente_visible_conc_ids:
-        prev_items_rows = (
-            db.query(ConciliacionItem, Conciliacion.operacion_id)
-            .join(Conciliacion, Conciliacion.id == ConciliacionItem.conciliacion_id)
-            .filter(
-                Conciliacion.id.in_(cliente_visible_conc_ids),
-                ConciliacionItem.fecha_servicio >= prev_start,
-                ConciliacionItem.fecha_servicio <= prev_end,
-            )
-            .all()
-        )
-    else:
-        prev_items_rows = []
-
     items_summary = _summarize_items(items_rows)
-    prev_items_summary = _summarize_items(prev_items_rows)
 
     devolucion_ids: set[int] = set()
     if conc_ids:
@@ -471,7 +506,12 @@ def dashboard_indicadores(
             else:
                 conc_enviada_facturar += 1
             continue
-        if conc.id in devolucion_ids:
+        # "Devuelta" refleja el estado ACTUAL, no que alguna vez se haya
+        # devuelto: al devolver, el backend deja la conciliacion en BORRADOR
+        # (ver devolver_conciliacion_cliente) y ese historial_cambio nunca se
+        # borra. Si Cointra ya la corrigio y reenvio (paso a EN_REVISION o
+        # mas adelante), ya no debe seguir contando aqui.
+        if estado == "BORRADOR" and conc.id in devolucion_ids:
             conc_devuelta += 1
             continue
 
@@ -758,14 +798,6 @@ def dashboard_indicadores(
         },
     }
 
-    # Restricción de visibilidad financiera por rol (no solo UI: también en API).
-    if user.rol == UserRole.CLIENTE:
-        payload["kpis"]["costos"] = 0
-        payload["kpis"]["ganancia"] = 0
-        payload["kpis"]["margen_pct"] = 0
-    elif user.rol == UserRole.TERCERO:
-        payload["kpis"]["ingresos"] = 0
-        payload["kpis"]["ganancia"] = 0
-        payload["kpis"]["margen_pct"] = 0
+    _sanitize_dashboard_payload_for_role(payload, user.rol)
 
     return payload

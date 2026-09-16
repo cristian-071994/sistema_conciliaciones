@@ -11,12 +11,14 @@ class Conciliacion(Base):
     __tablename__ = "conciliaciones"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    operacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("operaciones.id"), nullable=False)
+    operacion_id: Mapped[int] = mapped_column(Integer, ForeignKey("operaciones.id"), nullable=False, index=True)
     nombre: Mapped[str] = mapped_column(String(255), nullable=False)
     fecha_inicio: Mapped[datetime] = mapped_column(Date, nullable=False)
     fecha_fin: Mapped[datetime] = mapped_column(Date, nullable=False)
-    estado: Mapped[ConciliacionEstado] = mapped_column(Enum(ConciliacionEstado), default=ConciliacionEstado.BORRADOR)
-    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    estado: Mapped[ConciliacionEstado] = mapped_column(
+        Enum(ConciliacionEstado), default=ConciliacionEstado.BORRADOR, index=True
+    )
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     borrador_guardado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     enviada_facturacion: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     factura_cliente_enviada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

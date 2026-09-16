@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session, selectinload
 from app.api.deps import get_current_user
+from app.core.upload_limits import FACTURA_PDF_MAX_BYTES
 from app.db.session import get_db
 from app.models.comentario import Comentario
 from app.models.conciliacion import Conciliacion
@@ -512,9 +513,14 @@ def enviar_factura_cliente_conciliacion(
         fname = archivo.filename.strip()
         if not fname.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail=f"El archivo '{fname}' debe estar en formato PDF")
-        content = archivo.file.read()
+        content = archivo.file.read(FACTURA_PDF_MAX_BYTES + 1)
         if not content:
             raise HTTPException(status_code=400, detail=f"El archivo '{fname}' está vacío")
+        if len(content) > FACTURA_PDF_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo '{fname}' supera el tamaño máximo permitido (15 MB)",
+            )
         archivos_leidos.append({"filename": fname, "content": content})
 
     operacion = db.get(Operacion, conc.operacion_id)

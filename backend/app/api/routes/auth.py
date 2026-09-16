@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,8 @@ from app.models.usuario import Usuario
 from app.schemas.auth import AuthMessage, ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, ResetPasswordRequest, Token
 from app.schemas.user import UserOut
 from app.services.notifications import send_manual_email
+from app.services.permisos_service import permisos_de_usuario
+from app.services.rate_limit import ensure_not_rate_limited, register_failed_attempt, reset_attempts
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,17 +26,27 @@ def _validate_new_password(new_password: str, confirm_password: str) -> None:
 
 
 @router.post("/login", response_model=Token)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    # Clave por IP + email: no bloquea a todo el mundo por los intentos de
+    # uno solo, pero sí frena fuerza bruta contra una cuenta puntual.
+    client_host = request.client.host if request.client else "unknown"
+    rate_key = f"{client_host}:{payload.email.strip().lower()}"
+    ensure_not_rate_limited(rate_key)
+
     user = db.query(Usuario).filter(Usuario.email == payload.email).first()
     if not user or not user.activo or not verify_password(payload.password, user.password_hash):
+        register_failed_attempt(rate_key)
         raise HTTPException(status_code=401, detail="Email o password invalidos")
+
+    reset_attempts(rate_key)
     token = create_access_token(subject=str(user.id), token_version=int(user.token_version or 0))
     return Token(access_token=token)
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: Usuario = Depends(get_current_user)):
-    return user
+def me(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    out = UserOut.model_validate(user)
+    return out.model_copy(update={"permisos": permisos_de_usuario(db, user)})
 
 
 @router.post("/change-password", response_model=AuthMessage)
@@ -58,9 +70,19 @@ def change_password(
 
 @router.post("/forgot-password", response_model=AuthMessage)
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    # Mensaje SIEMPRE idéntico exista o no la cuenta (y solo se envía correo
+    # si existe) — evita que este endpoint sirva para enumerar qué correos
+    # están registrados en el sistema (dato personal bajo Ley 1581).
+    generic_message = AuthMessage(
+        message=(
+            "Si el correo está registrado, te enviamos un enlace de recuperación. "
+            f"Es válido por {settings.password_reset_token_expire_minutes} minutos."
+        )
+    )
+
     user = db.query(Usuario).filter(Usuario.email == payload.email).first()
     if not user or not user.activo:
-        raise HTTPException(status_code=404, detail="No existe un usuario activo con ese correo")
+        return generic_message
 
     token = create_password_reset_token(subject=str(user.id), token_version=int(user.token_version or 0))
     reset_link = f"{settings.frontend_url.rstrip('/')}/reset-password?token={quote(token)}"
@@ -72,20 +94,14 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         "Si no solicitaste este cambio, puedes ignorar este mensaje.\n"
     )
 
-    send_result = send_manual_email(
+    send_manual_email(
         [user.email],
         subject="Recuperacion de password - Refrigerados",
         body=email_body,
     )
-    if int(send_result.get("sent", 0)) < 1:
-        raise HTTPException(status_code=502, detail="No fue posible enviar el correo de recuperacion")
-
-    return AuthMessage(
-        message=(
-            "Correo de recuperacion enviado correctamente. "
-            f"El enlace es valido por {settings.password_reset_token_expire_minutes} minutos."
-        )
-    )
+    # No se distingue el resultado del envío en la respuesta (ver arriba);
+    # un fallo de SMTP se puede monitorear por logs/servicio, no por la API.
+    return generic_message
 
 
 @router.post("/reset-password", response_model=AuthMessage)

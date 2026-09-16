@@ -12,7 +12,7 @@ copy .env.example .env
 ## Configuracion
 Variable principal:
 
-- VITE_API_URL=http://127.0.0.1:8000/api
+- VITE_API_URL=http://127.0.0.1:8001/api
 
 ## Ejecutar en desarrollo
 ```powershell
@@ -36,6 +36,8 @@ npm run preview
 - Clientes
 - Terceros
 - Usuarios
+- Roles y Permisos
+- Viajes Adicionales
 
 ## Notas de integracion
 - El frontend depende de una API backend autenticada por JWT.

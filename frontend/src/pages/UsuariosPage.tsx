@@ -1,19 +1,27 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { ActionModal } from "../components/common/ActionModal";
+import { UserStatusIndicator } from "../components/common/UserStatusIndicator";
 import { api } from "../services/api";
-import type { Cliente, Operacion, Tercero, User } from "../types";
+import type { Cliente, EstadoConexion, Operacion, Tercero, User, UsuarioPresence } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
 }
 
+const INTERVALO_REFRESCO_PRESENCIA_MS = 30_000;
+
 export function UsuariosPage({ user }: Props) {
-  const soloCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const puedeVer = hasPermiso(user, "usuarios.ver");
+  const puedeCrear = hasPermiso(user, "usuarios.crear");
+  const puedeEditar = hasPermiso(user, "usuarios.editar");
+  const puedeDesactivar = hasPermiso(user, "usuarios.desactivar");
   const [usuarios, setUsuarios] = useState<User[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [terceros, setTerceros] = useState<Tercero[]>([]);
   const [operaciones, setOperaciones] = useState<Operacion[]>([]);
+  const [presencia, setPresencia] = useState<Map<number, UsuarioPresence>>(new Map());
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [rolSeleccionado, setRolSeleccionado] = useState<User["rol"]>("CLIENTE");
@@ -58,10 +66,35 @@ export function UsuariosPage({ user }: Props) {
   }
 
   useEffect(() => {
-    if (soloCointraAdmin) {
+    if (puedeVer) {
       void loadData();
     }
-  }, [soloCointraAdmin]);
+  }, [puedeVer]);
+
+  useEffect(() => {
+    if (!puedeVer) return;
+
+    async function refrescarPresencia() {
+      try {
+        const rows = await api.presenceOnline();
+        setPresencia(new Map(rows.map((row) => [row.id, row])));
+      } catch {
+        // La presencia es informativa: si falla, no interrumpe el resto de la página.
+      }
+    }
+
+    void refrescarPresencia();
+    const intervalId = window.setInterval(() => void refrescarPresencia(), INTERVALO_REFRESCO_PRESENCIA_MS);
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") void refrescarPresencia();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [puedeVer]);
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -140,15 +173,16 @@ export function UsuariosPage({ user }: Props) {
   return (
     <div className="space-y-3 rounded-2xl border border-border bg-white/90 p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-slate-900">Usuarios</h2>
-      {!soloCointraAdmin ? (
+      {!puedeVer ? (
         <p className="text-sm text-danger">
-          Solo los usuarios COINTRA_ADMIN pueden acceder a esta sección.
+          No tienes permisos para ver este módulo.
         </p>
       ) : (
         <>
           {error && <p className="text-sm font-medium text-danger">{error}</p>}
           {success && <p className="text-sm font-medium text-success">{success}</p>}
 
+          {puedeCrear && (
           <form className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-2" onSubmit={onCreate}>
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Nombre</label>
@@ -287,6 +321,7 @@ export function UsuariosPage({ user }: Props) {
               </button>
             </div>
           </form>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-sm">
@@ -298,7 +333,8 @@ export function UsuariosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Rol</th>
                   <th className="border-b border-border px-3 py-2 text-left">Asociación</th>
                   <th className="border-b border-border px-3 py-2 text-left">Activo</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Acciones</th>
+                  <th className="border-b border-border px-3 py-2 text-left">Estado</th>
+                  {(puedeEditar || puedeDesactivar) && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -317,43 +353,57 @@ export function UsuariosPage({ user }: Props) {
                     </td>
                     <td className="px-3 py-2">{u.activo ? "Sí" : "No"}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditModal({
-                              id: u.id,
-                              nombre: u.nombre,
-                              email: u.email,
-                              rol: u.rol,
-                              cliente_id: u.cliente_id,
-                              operacion_ids: u.operacion_ids ?? [],
-                            })
-                          }
-                          className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          Editar
-                        </button>
-                        {u.activo && (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmModal({ id: u.id, action: "inactivar" })}
-                            className="rounded-full border border-danger/40 bg-danger/5 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"
-                          >
-                            Inactivar
-                          </button>
-                        )}
-                        {!u.activo && (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmModal({ id: u.id, action: "reactivar" })}
-                            className="rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-medium text-success hover:bg-success/20"
-                          >
-                            Reactivar
-                          </button>
-                        )}
-                      </div>
+                      {u.activo ? (
+                        <UserStatusIndicator
+                          estado={presencia.get(u.id)?.estado_conexion ?? ("no_conectado" as EstadoConexion)}
+                          ultimoHeartbeat={presencia.get(u.id)?.ultimo_heartbeat ?? null}
+                        />
+                      ) : (
+                        <span className="text-xs text-neutral">—</span>
+                      )}
                     </td>
+                    {(puedeEditar || puedeDesactivar) && (
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          {puedeEditar && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditModal({
+                                  id: u.id,
+                                  nombre: u.nombre,
+                                  email: u.email,
+                                  rol: u.rol,
+                                  cliente_id: u.cliente_id,
+                                  operacion_ids: u.operacion_ids ?? [],
+                                })
+                              }
+                              className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivar && u.activo && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModal({ id: u.id, action: "inactivar" })}
+                              className="rounded-full border border-danger/40 bg-danger/5 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"
+                            >
+                              Inactivar
+                            </button>
+                          )}
+                          {puedeDesactivar && !u.activo && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModal({ id: u.id, action: "reactivar" })}
+                              className="rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-xs font-medium text-success hover:bg-success/20"
+                            >
+                              Reactivar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

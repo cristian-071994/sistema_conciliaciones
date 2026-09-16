@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import type { Tercero, User } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -10,7 +11,10 @@ interface Props {
 
 export function TercerosPage({ user }: Props) {
   const soloCointra = user.rol === "COINTRA";
-  const soloCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const puedeCrear = hasPermiso(user, "terceros.crear");
+  const puedeEditar = hasPermiso(user, "terceros.editar");
+  const puedeDesactivar = hasPermiso(user, "terceros.desactivar");
+  const puedeGestionar = puedeEditar || puedeDesactivar;
   const [terceros, setTerceros] = useState<Tercero[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -106,32 +110,34 @@ export function TercerosPage({ user }: Props) {
           {error && <p className="text-sm font-medium text-danger">{error}</p>}
           {success && <p className="text-sm font-medium text-success">{success}</p>}
 
-          <form className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-3" onSubmit={onCreate}>
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Nombre</label>
-              <input
-                name="nombre"
-                required
-                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">NIT</label>
-              <input
-                name="nit"
-                required
-                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-              />
-            </div>
-            <div className="md:col-span-3">
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
-              >
-                Crear tercero
-              </button>
-            </div>
-          </form>
+          {puedeCrear && (
+            <form className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-slate-50/70 p-4 md:grid-cols-3" onSubmit={onCreate}>
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Nombre</label>
+                <input
+                  name="nombre"
+                  required
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">NIT</label>
+                <input
+                  name="nit"
+                  required
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
+                >
+                  Crear tercero
+                </button>
+              </div>
+            </form>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse text-sm">
@@ -141,7 +147,7 @@ export function TercerosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">NIT</th>
                   <th className="border-b border-border px-3 py-2 text-left">Activo</th>
-                  {soloCointraAdmin && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
+                  {puedeGestionar && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -151,17 +157,19 @@ export function TercerosPage({ user }: Props) {
                     <td className="px-3 py-2">{t.nombre}</td>
                     <td className="px-3 py-2">{t.nit}</td>
                     <td className="px-3 py-2">{t.activo ? "Sí" : "No"}</td>
-                    {soloCointraAdmin && (
+                    {puedeGestionar && (
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setEditModal({ id: t.id, nombre: t.nombre, nit: t.nit })}
-                            className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Editar
-                          </button>
-                          {t.activo && (
+                          {puedeEditar && (
+                            <button
+                              type="button"
+                              onClick={() => setEditModal({ id: t.id, nombre: t.nombre, nit: t.nit })}
+                              className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivar && t.activo && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: t.id, action: "inactivar" })}
@@ -170,7 +178,7 @@ export function TercerosPage({ user }: Props) {
                               Inactivar
                             </button>
                           )}
-                          {!t.activo && (
+                          {puedeDesactivar && !t.activo && (
                             <button
                               type="button"
                               onClick={() => setConfirmModal({ id: t.id, action: "reactivar" })}

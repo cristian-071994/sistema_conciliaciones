@@ -10,8 +10,8 @@ class HistorialCambio(Base):
     __tablename__ = "historial_cambios"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conciliacion_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliaciones.id"), nullable=True)
-    item_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliacion_items.id"), nullable=True)
+    conciliacion_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliaciones.id"), nullable=True, index=True)
+    item_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conciliacion_items.id"), nullable=True, index=True)
     usuario_id: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     campo: Mapped[str] = mapped_column(String(100), nullable=False)
     valor_anterior: Mapped[str | None] = mapped_column(Text, nullable=True)

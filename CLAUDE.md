@@ -9,7 +9,7 @@ Sistema web de conciliación de servicios de transporte para **Cointra S.A.S.**,
 **Estado actual:** En desarrollo activo (rama dev, localhost). Producción en `docker-prod-v1.2` no debe tocarse hasta completar los nuevos bloques.
 
 **Stack:** Python 3.13 + FastAPI 0.115 + SQLAlchemy 2 + Alembic | PostgreSQL 16 | React 18 + TypeScript 5.6 + Vite 5 + TailwindCSS 3 | Docker Compose
-**App móvil (nueva):** React Native + Expo — solo para rol CLIENTE
+**App móvil:** React Native + Expo (SDK 57) — implementada, solo para rol CLIENTE (crear/consultar viajes adicionales, autogestionar tarifas de ruta y ver manifiestos)
 
 ---
 
@@ -112,12 +112,25 @@ No hay suite de tests configurada.
 
 Implementado en `backend/app/services/visibility.py` → `sanitize_item_for_role()`. Aplica en responses de API, exports Excel/PDF y correos.
 
-### Permisos por rol
+### Permisos por rol (identidad de negocio — fija, no editable vía UI)
 
-- **COINTRA_ADMIN:** CRUD completo en todo. Puede editar cualquier registro en cualquier estado.
-- **COINTRA_USER:** Crea viajes (carga masiva), conciliaciones, vehículos. Edita servicios en BORRADOR. NO elimina ni gestiona catálogos de usuarios/clientes/terceros/operaciones.
-- **CLIENTE:** Solo crea y ve sus **viajes adicionales**. Ve conciliaciones que le corresponden. No accede a ningún otro tipo de servicio.
-- **TERCERO:** Carga servicios propios (conductor relevo, descargue, disponibilidad, estibas). Edita sus servicios solo si NO están asociados a una conciliación. Puede crear vehículos propios (validado por `tercero_id`). NO crea conciliaciones.
+- **COINTRA_ADMIN:** CRUD completo en todo. Puede editar cualquier registro en cualquier estado. `es_superadmin=True` en el modelo `Rol`: bypass total de `tiene_permiso()`.
+- **COINTRA_USER:** Crea viajes (carga masiva), conciliaciones, vehículos. Edita servicios en BORRADOR. Qué catálogos administrativos puede además crear/editar/desactivar (operaciones, clientes, terceros, vehículos, servicios, catálogo de tarifas, viajes, Avansat) depende de los permisos que un COINTRA_ADMIN le asigne — ver "Permisos administrativos configurables" abajo.
+- **CLIENTE:** Solo crea y ve sus **viajes adicionales**. Ve conciliaciones que le corresponden, y solo desde que Cointra las envía a revisión (nunca ve conciliaciones en BORRADOR — ni en listados, ni en el dashboard). No accede a ningún otro tipo de servicio.
+- **TERCERO:** Carga servicios propios (conductor relevo, descargue, disponibilidad, estibas). Edita sus servicios solo si NO están asociados a una conciliación. Puede crear vehículos y tipos de vehículo propios (validado por `tercero_id`) — esto es fijo, no depende de permisos. NO crea conciliaciones.
+
+Esta clasificación de negocio (rol + sub_rol) es fija y no se edita desde el panel de Roles y Permisos — ver `backend/app/core/permisos_catalog.py` (docstring) para el detalle de qué es regla fija vs. qué es permiso configurable.
+
+### Permisos administrativos configurables (panel Roles y Permisos)
+
+Además de la identidad de negocio fija de arriba, existe un segundo nivel de permisos **sí editable** desde `/roles` (solo visible con el permiso `roles.ver`/`roles.gestionar`), que gobierna el CRUD de catálogos administrativos: Usuarios, Roles, Presencia, Operaciones, Clientes, Terceros, Vehículos/Tipos de vehículo, Servicios, Catálogo de Tarifas, Viajes y Consulta Avansat.
+
+- **Modelos:** `Rol` / `Permiso` (many-to-many vía `rol_permisos`), `Usuario.rol_id` (se resincroniza automáticamente con `sync_rol_id()` cada vez que cambian `rol`/`sub_rol`).
+- **Catálogo canónico:** `backend/app/core/permisos_catalog.py` — lista de permisos, roles base y sus permisos por defecto (`PERMISOS_POR_ROL_DEFECTO`). Agregar un permiso nuevo aquí no requiere migración — `seed_data()` lo inserta de forma idempotente en cada arranque, y hace *backfill* automático a roles existentes si el permiso es nuevo.
+- **Servicio:** `backend/app/services/permisos_service.py` — `tiene_permiso(db, usuario, clave)` y `permisos_de_usuario(db, usuario)` (esta última alimenta `permisos: string[]` en `/auth/me`, que el frontend usa para decidir qué mostrar).
+- **Dependency FastAPI:** `require_permission(clave)` en `app/api/deps.py` — usar en vez de chequeos de rol embebidos para cualquier acción administrativa nueva.
+- **Frontend:** `frontend/src/utils/permisos.ts` (`hasPermiso`/`hasAlgunPermiso`); `Sidebar.tsx` y las rutas gateadas en `App.tsx` (`RequirePermiso`) muestran/bloquean módulos según el permiso real del usuario, no según su rol — así un Cliente al que se le concede un permiso puntual (ej. `catalogo_tarifas.ver`) ve exactamente ese módulo.
+- **Regla que NO se toca aquí:** un permiso administrativo nunca cambia la visibilidad financiera fija (tabla de arriba). Ej.: aunque se le conceda `catalogo_tarifas.crear` a un Cliente, `rentabilidad_pct`/`tarifa_tercero` siguen ocultos para él en la respuesta del backend — ver `_to_out()` en `backend/app/api/routes/tarifas.py`.
 
 ---
 
@@ -181,16 +194,18 @@ BORRADOR → ENVIADA → EN_REVISION_CLIENTE → APROBADA → CERRADA
 
 ---
 
-## Flujo de Viaje Adicional (nuevo)
+## Flujo de Viaje Adicional
 
-1. **Cliente solicita** via web o app móvil: fecha, hora de cita, tercero asignado, tipología de vehículo, tipo de producto, origen, destino (municipios Colombia), tipo de viaje (ida / ida y vuelta), placa opcional (vehículos del tercero).
-2. **Sistema aplica tarifa** desde `tarifas_ruta` según origen + destino + tipología + tipo de viaje → `tarifa_cliente`.
-3. **Si no hay tarifa en el tarifario**, el tercero ingresa su `tarifa_tercero` manualmente.
-4. **Sistema calcula** `tarifa_cliente`, `tarifa_tercero`, `rentabilidad` según regla de negocio central.
-5. **Cointra sube manifiesto PDF** — bot extrae número de manifiesto y lo asocia al viaje adicional.
-6. **Manifiesto descargable** por cualquier usuario con acceso al viaje adicional.
+1. **Cliente solicita** vía web o app móvil: fecha, tercero asignado, tipo de vehículo, origen/destino (texto libre, sin FK a municipios), placa opcional (vehículos del tercero). Modelo: `SolicitudViajeAdicional` (`app/models/viaje_adicional.py`), endpoints en `app/api/routes/viajes_adicionales.py`.
+2. **Sistema busca tarifa** en `catalogo_tarifas` (la misma tabla del Catálogo de Tarifas administrativo — no existe tabla separada `tarifas_ruta`) filtrando por servicio VIAJE_ADICIONAL + tipo de vehículo + origen/destino → `tarifa_cliente`.
+3. **Si no hay tarifa registrada**, la web/app bloquea el envío de la solicitud (decisión de producto explícita) y ofrece crear la tarifa faltante ahí mismo: el Cliente solo ingresa `tarifa_cliente`, el sistema calcula `tarifa_tercero`/`rentabilidad_pct` con el % por defecto (`DEFAULT_RENTABILIDAD_PCT` en `services/pricing.py`) — un Cliente nunca puede fijar ni ver la rentabilidad, ni siquiera con permisos administrativos (ver `_ensure_puede_crear` en `tarifas.py`).
+4. **Sistema calcula** `tarifa_cliente`, `tarifa_tercero`, `rentabilidad_pct` según la Regla de Negocio Central.
+5. **Cointra sube manifiesto PDF** (`ManifiestoViajeAdicional`) — el número de manifiesto se ingresa **manualmente** por ahora; el parser automático (`services/manifiesto_parser.py`) sigue pendiente de una muestra real del formato para calibrarse.
+6. **Manifiesto descargable** por cualquier usuario con acceso a la solicitud.
 7. **Si no hay manifiesto**, el viaje adicional resalta en rojo en todas las vistas.
-8. **Sigue el flujo normal** de conciliación.
+8. **Al convertirse en `Viaje`/`ConciliacionItem`** (`services/viaje_adicional_conversion.py`), sigue el flujo normal de conciliación.
+
+`EstadoGestionViajeAdicional` es un campo **computado** (no persistido) que resume dónde va la solicitud: `PENDIENTE_TARIFA → PENDIENTE_MANIFIESTO → SIN_CONCILIAR → EN_BORRADOR/EN_REVISION/APROBADA/CONCILIADO` — distinto del campo manual `estado` (`ItemEstado`).
 
 ---
 
@@ -215,127 +230,124 @@ Implementada en `backend/app/services/pricing.py`.
 PostgreSQL 16. Soft deletes via campo `activo`. IDs `int autoincrement`, timestamps `created_at`/`updated_at`.
 
 **Catálogos:**
-- `usuarios`: email, hashed_password, rol, sub_rol, token_version (invalida JWTs en logout)
+- `usuarios`: email, hashed_password, rol, sub_rol, `rol_id` (FK a `roles`, resincronizada por `sync_rol_id()`), token_version (invalida JWTs en logout)
 - `clientes`, `terceros`: entidades vinculadas a usuarios
 - `operaciones`: vincula cliente + tercero + % rentabilidad + descuento opcional
-- `vehiculos`: placa, tipo, vinculados a tercero
-- `servicios`: catálogo de servicios con código auto-generado desde iniciales en mayúscula del nombre
-- `municipios_colombia`: tabla de los 1,122 municipios — usar como FK en origen/destino de viajes adicionales
+- `vehiculos`, `tipos_vehiculo`: placa/tipo vinculados a tercero
+- `servicios`: catálogo de servicios con código auto-generado desde el nombre completo normalizado
+
+**Roles y permisos (panel administrativo configurable):**
+- `roles`: los 4 roles base sembrados (`COINTRA_ADMIN` con `es_superadmin=True`, `COINTRA_USER`, `CLIENTE`, `TERCERO`) — no hay roles "custom"
+- `permisos`: catálogo de claves (`operaciones.crear`, `catalogo_tarifas.editar`, etc.) — ver `permisos_catalog.py`
+- `rol_permisos`: tabla intermedia many-to-many entre `roles` y `permisos`
 
 **Operativa:**
 - `conciliacion_items`: todos los tipos de servicio (viaje, viaje_adicional, hora_extra, etc.) con estado, item_tipo, tarifas, y campos específicos por tipo
-- `conciliaciones`: contenedor con estado, período, motivo_devolucion
-- `viajes_adicionales_solicitud`: solicitud formal del cliente antes de convertirse en item (<!-- TODO: evaluar si merge con conciliacion_items o tabla separada -->)
+- `conciliaciones`: contenedor con estado, período, `enviada_facturacion`/`factura_cliente_enviada` (booleanos, no forman parte del enum de estado — ver nota abajo)
+- `viajes_adicionales_solicitud`: solicitud formal del cliente, tabla separada de `conciliacion_items` (decisión ya tomada, no pendiente) — se convierte en `Viaje`/`ConciliacionItem` vía `services/viaje_adicional_conversion.py` una vez tiene tarifa y manifiesto
 
 **Tarifas:**
-- `tarifas_ruta`: nombre, origen (FK municipios), destino (FK municipios), tipologia_vehiculo, tipo_viaje (IDA/IDA_VUELTA), precio_cliente, vigencia_desde, vigencia_hasta
-- `catalogo_tarifa`: tarifa de hora extra (valor fijo)
+- `catalogo_tarifas`: tabla única y reutilizada para todo el catálogo — `servicio_id`, `tipo_vehiculo_id`, `origen`/`destino` (texto libre, solo obligatorios y usados cuando el servicio es VIAJE_ADICIONAL), `tarifa_cliente`, `rentabilidad_pct`, `tarifa_tercero` (calculada). No existe una tabla `tarifas_ruta` separada — fue una decisión explícita de reusar `catalogo_tarifas` en vez de crear un modelo nuevo.
 
 **Soporte:**
-- `manifiestos_viaje_adicional`: archivo PDF, número de manifiesto extraído, asociado a viaje adicional
+- `manifiestos_viaje_adicional`: archivo PDF (`LargeBinary`), número de manifiesto ingresado manualmente por ahora, asociado 1:1 a una solicitud de viaje adicional
 - `notificaciones`, `comentarios`, `historial_cambios` (audit trail — quién cambió qué estado y cuándo)
 - `factura_archivo_cliente`: archivos Excel/PDF adjuntos a conciliaciones
 - `manifiestos_avansat`, `avansat_cache`: solo para verificación externa, sin efecto en lógica
 
-<!-- VERIFICADO → catalogo_tarifa no tiene FK a conciliacion_items en ninguna migración existente (12 migraciones revisadas) -->
-<!-- VERIFICADO → usuarios.cliente_id y usuarios.tercero_id son FK directas a clientes/terceros (nullable). Tabla intermedia usuario_operaciones_asignadas para many-to-many usuario↔operación -->
-<!-- PENDIENTE IMPLEMENTAR → ConciliacionEstado en BD solo tiene: BORRADOR, EN_REVISION, APROBADA, CERRADA. Faltan: ENVIADA, EN_REVISION_CLIENTE, DEVUELTA, ANULADA -->
-<!-- VERIFICADO → código de servicio generado en backend/app/api/routes/servicios.py líneas 22-25: convierte nombre completo a mayúsculas ASCII y reemplaza no-alfanuméricos por _. Ejemplo: "Hora Extra" → "HORA_EXTRA". NO son iniciales. Unicidad validada por nombre Y código antes de insertar -->
+<!-- VERIFICADO → catalogo_tarifas no tiene FK a conciliacion_items en ninguna migración existente -->
+<!-- VERIFICADO → usuarios.cliente_id y usuarios.tercero_id son FK directas a clientes/terceros (nullable). Tabla intermedia usuario_operaciones_asignadas para many-to-many usuario↔operación — es el mecanismo REAL de visibilidad de un Cliente sobre sus operaciones (no "todas las operaciones con ese cliente_id"), usado consistentemente en conciliaciones_core.py, viajes.py y dashboard.py -->
+<!-- VERIFICADO → ConciliacionEstado (enum en BD) solo tiene: BORRADOR, EN_REVISION, APROBADA, CERRADA. Los estados ENVIADA/DEVUELTA/ANULADA del diagrama de abajo NO son valores del enum: "enviada a facturar" se modela con el booleano enviada_facturacion (+ factura_cliente_enviada para distinguir facturada), y "devuelta" se infiere de un historial_cambios con campo="devolucion_cliente" (devolver_conciliacion_cliente() deja el estado en BORRADOR otra vez) — ver _sanitize y el conteo de conc_devuelta en dashboard.py, que solo cuenta como Devuelta si SIGUE en BORRADOR sin corregir -->
+<!-- VERIFICADO → código de servicio generado en backend/app/api/routes/servicios.py función _to_codigo(): convierte nombre completo a mayúsculas ASCII y reemplaza no-alfanuméricos por _. Ejemplo: "Hora Extra" → "HORA_EXTRA". NO son iniciales. Unicidad validada por nombre Y código antes de insertar -->
 
 ---
 
 ## Estructura del Proyecto
 
-### Estado actual — post Bloque 0 (verificado con Docker ✅)
+### Estado actual
 
 ```
 backend/app/
   api/routes/
-    conciliaciones.py              # Aggregator — 11 líneas, solo importa sub-routers ✅
-    conciliaciones_core.py         # 14 endpoints core (crear, listar, detalle, borrador...) ✅
-    conciliaciones_items.py        # 8 endpoints de ítems ✅
-    conciliaciones_workflow.py     # 9 endpoints de flujo y comentarios ✅
-    conciliaciones_excel.py        # _build_conciliacion_excel refactorizado con _ExcelContext ✅
-    conciliaciones_excel_renders.py # _ExcelContext NamedTuple + 11 funciones _xl_* ✅
-    conciliaciones_excel_legacy.py # _build_facturacion_excel + legacy (dead code candidato) ✅
-    conciliaciones_helpers.py      # ~24 funciones privadas de utilidad — 665 líneas ✅
-    viajes.py                      # ⚠️ ZONA DE RIESGO: 956 líneas — vigilar al tocar
+    conciliaciones.py              # Aggregator — solo importa sub-routers
+    conciliaciones_core.py         # Endpoints core (crear, listar, detalle, borrador...)
+    conciliaciones_items.py        # Endpoints de ítems
+    conciliaciones_workflow.py     # Endpoints de flujo y comentarios
+    conciliaciones_excel.py        # _build_conciliacion_excel con _ExcelContext
+    conciliaciones_excel_renders.py # _ExcelContext NamedTuple + funciones _xl_*
+    conciliaciones_excel_legacy.py # _build_facturacion_excel + legacy (dead code candidato)
+    conciliaciones_helpers.py      # Funciones privadas de utilidad
+    viajes.py                      # ⚠️ ZONA DE RIESGO: >900 líneas — vigilar al tocar; incluye carga masiva Excel
+    viajes_adicionales.py          # Solicitudes de viajes adicionales (crear, listar, tarifa, manifiesto)
     catalogs.py                    # Usuarios, clientes, terceros, operaciones
+    vehiculos.py                   # Vehículos y tipos de vehículo
     servicios.py                   # Catálogo de servicios — contiene _to_codigo()
-    dashboard.py                   # KPIs y métricas diferenciadas por rol
+    tarifas.py                     # Catálogo de tarifas (incluye rutas de VIAJE_ADICIONAL)
+    roles.py                       # Roles y permisos administrativos configurables
+    presence.py                    # Heartbeat y usuarios en línea
+    avansat.py                     # Consulta y sincronización de cache Avansat
+    dashboard.py                   # KPIs y métricas diferenciadas por rol (>800 líneas — vigilar)
     notificaciones.py              # Inbox interno + envío manual de correo
   models/
     enums.py                 # UserRole, CointraSubRol, ConciliacionEstado, ItemTipo, ItemEstado
-                             # Estados actuales: BORRADOR/EN_REVISION/APROBADA/CERRADA + PENDIENTE/EN_REVISION/APROBADO/RECHAZADO
-    usuario.py               # FK directas: cliente_id, tercero_id (nullable)
-    conciliacion.py          # Modelos ORM de conciliaciones e ítems
-    catalogs.py              # Modelos ORM de clientes, terceros, operaciones, etc.
-  schemas/                   # Pydantic separados por Create / Update / Response
+    usuario.py                # FK directas: cliente_id, tercero_id, rol_id (nullable)
+    rol.py, permiso.py         # Roles y permisos administrativos configurables
+    viaje_adicional.py         # SolicitudViajeAdicional
+    manifiesto_viaje_adicional.py
+    catalogo_tarifa.py         # Incluye origen/destino/tipo_vehiculo_id para rutas de VIAJE_ADICIONAL
+    conciliacion.py            # Modelos ORM de conciliaciones e ítems
+    catalogs.py                # Modelos ORM de clientes, terceros, operaciones, etc.
+  schemas/                     # Pydantic separados por Create / Update / Response
   services/
-    visibility.py            # sanitize_item_for_role() — SIEMPRE aplicar antes de retornar datos
-    pricing.py               # Cálculo de tarifas y rentabilidad
-    notifications.py         # Email (smtplib) + notificaciones internas
-    avansat.py               # Cliente HTTP Avansat — solo verificación y Excel
-    avansat_cache.py         # sync_avansat_yesterday_today()
-    audit.py                 # Registro en historial_cambios
+    visibility.py             # sanitize_item_for_role() — SIEMPRE aplicar antes de retornar datos
+    pricing.py                # Cálculo de tarifas y rentabilidad (DEFAULT_RENTABILIDAD_PCT)
+    permisos_service.py       # tiene_permiso(), permisos_de_usuario(), sync_rol_id()
+    presence_service.py       # Lógica de umbral de heartbeat
+    viaje_adicional_conversion.py  # Convierte una solicitud aprobada en Viaje/ConciliacionItem
+    rate_limit.py             # Rate limiting de intentos de login
+    notifications.py          # Email (smtplib) + notificaciones internas
+    avansat.py                # Cliente HTTP Avansat — solo verificación y Excel
+    avansat_cache.py          # sync_avansat_yesterday_today()
+    audit.py                  # Registro en historial_cambios
   core/
-    config.py                # Settings (pydantic-settings, carga .env)
-    security.py              # JWT (python-jose) + bcrypt (passlib)
+    config.py                 # Settings (pydantic-settings, carga .env)
+    security.py                # JWT (python-jose) + bcrypt (passlib)
+    permisos_catalog.py         # Catálogo canónico de permisos/roles base — ver seed_data()
+    upload_limits.py            # Límites de tamaño de archivo (ver Deuda Técnica)
   db/
-    seed.py                  # Crea admin inicial si no existe
-  alembic/versions/          # 12 migraciones existentes (no tocar sin nueva revisión)
-
-frontend/src/
-  pages/DashboardPage.tsx         # Hub principal
-  services/api.ts                 # Cliente HTTP centralizado (fetch nativo; token en localStorage)
-  types/index.ts                  # Interfaces TypeScript de todas las entidades
-  utils/permissions.ts            # Visibilidad de campos por rol
-  utils/formatters.ts             # formatCOP() para moneda colombiana
-```
-
-### Archivos nuevos a crear (pendientes de implementación)
-
-```
-backend/app/
-  api/routes/
-    conciliaciones_estado.py     # Transiciones de estado (extraído de conciliaciones.py)
-    conciliaciones_items.py      # CRUD de ítems (extraído de conciliaciones.py)
-    conciliaciones_archivos.py   # Archivos adjuntos (extraído de conciliaciones.py)
-    viajes_adicionales.py        # Solicitudes de viajes adicionales (nuevo)
-    tarifas_ruta.py              # CRUD tarifario de rutas (nuevo)
-    manifiestos.py               # Upload PDF + extracción número manifiesto (nuevo)
-    reportes.py                  # Exportación Excel/XLSX (nuevo)
-    presence.py                  # Heartbeat y usuarios en línea (nuevo)
-  models/
-    viaje_adicional.py           # ORM viajes adicionales (nuevo)
-    tarifa_ruta.py               # ORM tarifario de rutas (nuevo)
-    municipio.py                 # ORM municipios Colombia — 1122 registros seed (nuevo)
-  services/
-    manifiesto_parser.py         # Extracción número manifiesto desde PDF (nuevo)
-    reportes_service.py          # Lógica generación Excel (nuevo)
-    presence.py                  # Lógica umbral heartbeat (nuevo)
+    seed.py                    # Crea admin inicial + siembra roles/permisos, idempotente
+  alembic/versions/            # No tocar migraciones existentes sin nueva revisión
 
 frontend/src/
   pages/
-    ViajesAdicionalesPage.tsx    # Lista y gestión (nuevo)
-    TarifasRutaPage.tsx          # Tarifario — solo COINTRA_ADMIN (nuevo)
-    ReportesPage.tsx             # Exportación reportes (nuevo)
+    DashboardHomePage.tsx      # KPIs y gráficas (SVG propios, sin librería de charts)
+    DashboardPage.tsx          # Gestión de conciliaciones (lista, workflow, Excel)
+    RolesPage.tsx              # Panel de Roles y Permisos — checkboxes + botón "Guardar cambios"
+    ViajesAdicionalesPage.tsx
+    CatalogoTarifasPage.tsx    # Incluye filtros por servicio/tipo de vehículo/ruta
+    OperacionesPage.tsx, ClientesPage.tsx, TercerosPage.tsx, VehiculosPage.tsx, ServiciosPage.tsx, UsuariosPage.tsx, AvansatPage.tsx
   components/
-    MunicipioSelector.tsx        # Selector búsqueda municipios Colombia (nuevo)
-    ManifiestoUpload.tsx         # Upload PDF manifiesto (nuevo)
-    VehiculoSelector.tsx         # Selector vehículos del tercero (nuevo)
-    UserStatusIndicator.tsx      # Punto verde parpadeante presencia (nuevo)
+    layout/Sidebar.tsx         # Ítems fijos por rol + ítems condicionados a permisos (PERMISSION_NAV_ITEMS)
+    common/UserStatusIndicator.tsx  # Punto verde parpadeante de presencia
+  services/api.ts               # Cliente HTTP centralizado (fetch nativo; token `refrigerados_token` en localStorage)
+  types/index.ts                 # Interfaces TypeScript de todas las entidades
+  utils/permisos.ts              # hasPermiso() / hasAlgunPermiso() — permisos administrativos configurables
+  utils/formatters.ts            # formatCOP() para moneda colombiana
 
-mobile/                          # React Native + Expo — solo CLIENTE (nuevo, repo separado)
+mobile/                          # React Native + Expo SDK 57 — solo CLIENTE, implementada
   app/
-    (auth)/login.tsx
-    (tabs)/solicitudes.tsx
-    (tabs)/nueva-solicitud.tsx
-  components/
-    MunicipioSelector.tsx
-    ManifiestoViewer.tsx
-  services/api.ts
+    (auth)/                     # login, bienvenida
+    (tabs)/solicitudes.tsx, nueva-solicitud.tsx
+    tarifas.tsx                 # Autogestión de tarifas de ruta faltantes (solo tarifa_cliente)
+    manifiesto/[id].tsx         # Visor de PDF (WebView / Intent según plataforma)
+  src/api.ts, src/auth.tsx, src/theme.ts
 ```
+
+### Pendiente / no iniciado
+
+- `services/manifiesto_parser.py` — extracción automática del número de manifiesto desde el PDF; hoy se ingresa manualmente. Pendiente de una muestra real del formato para calibrarse.
+- Exportación de reportes (Excel/XLSX) más allá de lo que ya cubre `conciliaciones_excel.py` — no hay módulo `reportes.py` separado; no está en desarrollo activo.
+- Selector de municipios de Colombia para origen/destino — hoy `origen`/`destino` son texto libre (sin FK), tanto en viajes adicionales como en el catálogo de tarifas.
 
 ---
 
@@ -343,20 +355,14 @@ mobile/                          # React Native + Expo — solo CLIENTE (nuevo, 
 
 En `startup_event()` (`app/main.py`):
 1. Valida que exista la tabla `usuarios` — lanza `RuntimeError` si no hay migraciones
-2. Ejecuta `seed_data()` — crea admin por defecto y carga municipios Colombia si no existen (idempotente)
+2. Ejecuta `seed_data()` — crea admin por defecto y siembra roles/permisos si no existen (idempotente; ver `permisos_catalog.py`)
 3. Si `AVANSAT_ENABLED=true`, arranca hilo daemon que llama `sync_avansat_yesterday_today()` cada 1800 s
 
 ---
 
 ## Exportación de Reportes
 
-Módulo nuevo `reportes.py` + `reportes_service.py`. Exportación en **XLSX** de:
-- Lista de servicios por operación y período (con filtros por tipo, estado, tercero, cliente)
-- Conciliaciones (detalle de ítems, tarifas según visibilidad de rol)
-- Viajes adicionales (con estado de manifiesto)
-- Dashboard KPIs
-
-La visibilidad de campos financieros aplica igualmente en los exports según el rol que exporta.
+Hoy solo existe exportación a Excel de conciliaciones (`conciliaciones_excel.py`) — la visibilidad de campos financieros aplica igualmente ahí según el rol que exporta. Un módulo `reportes.py` separado (servicios por período con filtros, viajes adicionales, KPIs del dashboard) sigue sin iniciarse — ver "Pendiente / no iniciado" en Estructura del Proyecto.
 
 ---
 
@@ -380,13 +386,15 @@ La visibilidad de campos financieros aplica igualmente en los exports según el 
 
 ---
 
-## App Móvil — React Native + Expo
+## App Móvil — React Native + Expo (SDK 57)
 
 - Audiencia: **solo rol CLIENTE**
-- Funcionalidades: crear solicitudes de viajes adicionales, ver lista con filtros por cualquier campo, ver estado del viaje, descargar/ver PDF del manifiesto
+- Funcionalidades: crear solicitudes de viajes adicionales (origen/destino/tipo de vehículo con tarifa automática), ver lista con filtros, ver estado del viaje, descargar/ver PDF del manifiesto
 - Filtros disponibles: placa, nombre de tarifa, origen, destino, estado (PENDIENTE, EN_CONCILIACION, APROBADO, RECHAZADO), fecha
+- **Pantalla "Tarifas"** (`app/tarifas.tsx`): autogestión de tarifas de ruta faltantes cuando origen+destino+tipo de vehículo no tienen tarifa en el catálogo — el Cliente solo ingresa `tarifa_cliente`, el sistema calcula el resto (misma regla fija de "el Cliente nunca fija ni ve rentabilidad" que en la web)
 - Misma API del backend — no hay endpoints exclusivos para móvil
-- Autenticación: JWT igual que web
+- Autenticación: JWT igual que web, token propio `refrigerados_token`
+- Ver `mobile/AGENTS.md` antes de escribir código nuevo: Expo SDK 57 cambió APIs (ej. `expo-file-system` se movió a `expo-file-system/legacy`)
 
 ---
 
@@ -403,11 +411,11 @@ El super admin puede ver en tiempo real qué usuarios están conectados al siste
 
 **Implementación:**
 - `backend/app/api/routes/presence.py` — endpoints `heartbeat` y `online`
-- `backend/app/services/presence.py` — lógica de umbral de tiempo
+- `backend/app/services/presence_service.py` — lógica de umbral de tiempo
 - Frontend: componente `UserStatusIndicator.tsx` con animación CSS `animate-pulse` de Tailwind
-- Solo COINTRA_ADMIN puede consultar `GET /api/presence/online` — los demás roles reciben 403
+- Solo COINTRA_ADMIN puede consultar `GET /api/presence/online` — los demás roles reciben 403 (permiso `presencia.ver`)
 
-**BD:** campo `ultimo_heartbeat: DateTime nullable` en tabla `usuarios`, o tabla separada `user_presence(usuario_id, ultimo_heartbeat)`.
+**BD:** campo `usuarios.ultimo_heartbeat: DateTime nullable` — sin tabla separada.
 
 ---
 

@@ -55,10 +55,12 @@ class OperacionCreate(BaseModel):
 
 
 class OperacionUpdate(BaseModel):
+    # porcentaje_rentabilidad NO va aqui a proposito: ese campo se cambia
+    # solo via OperacionRentabilidadUpdate (permiso "operaciones.rentabilidad"),
+    # independiente del permiso "operaciones.editar" de este endpoint.
     cliente_id: int | None = None
     tercero_id: int | None = None
     nombre: str | None = None
-    porcentaje_rentabilidad: float | None = Field(default=None, ge=0, le=99.99)
     cliente_usuario_ids: list[int] | None = None
 
 

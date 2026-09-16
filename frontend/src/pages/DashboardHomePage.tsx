@@ -351,7 +351,10 @@ export function DashboardHomePage({ user }: Props) {
     const chartW = width - leftPad - rightPad;
     const chartH = height - topPad - bottomPad;
 
-    const maxValue = Math.max(...rows.map((row) => row.value), 1);
+    // maxValue real (sin piso de 1) solo para las etiquetas del eje — si el
+    // período no tiene datos, deben mostrar $0 y no un falso "$1".
+    const realMax = Math.max(...rows.map((row) => row.value));
+    const maxValue = Math.max(realMax, 1);
     const slot = chartW / rows.length;
     const barW = Math.max(12, slot * 0.55);
 
@@ -365,7 +368,7 @@ export function DashboardHomePage({ user }: Props) {
         <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
           {Array.from({ length: 5 }).map((_, idx) => {
             const y = topPad + (idx / 4) * chartH;
-            const value = maxValue * (1 - idx / 4);
+            const value = realMax * (1 - idx / 4);
             return (
               <g key={idx}>
                 <line x1={leftPad} y1={y} x2={width - rightPad} y2={y} stroke="#dbe5df" strokeDasharray="4 4" />
@@ -426,9 +429,13 @@ export function DashboardHomePage({ user }: Props) {
     const chartW = width - leftPad - rightPad;
     const chartH = height - topPad - bottomPad;
 
-    const maxAxis = Math.max(...rows.map((row) => Math.max(row.ingresos, row.costos, row.ganancia)), 1);
+    // Versión "real" (sin piso de 1) solo para las etiquetas del eje — si el
+    // período no tiene datos, deben mostrar $0 y no un falso "$1".
+    const realMaxAxis = Math.max(...rows.map((row) => Math.max(row.ingresos, row.costos, row.ganancia)));
+    const maxAxis = Math.max(realMaxAxis, 1);
     const minAxis = Math.min(...rows.map((row) => Math.min(0, row.ganancia)), 0);
     const spanAxis = Math.max(maxAxis - minAxis, 1);
+    const realSpanAxis = realMaxAxis - minAxis;
     const zeroY = topPad + chartH - ((0 - minAxis) / spanAxis) * chartH;
 
     const slot = chartW / rows.length;
@@ -457,7 +464,7 @@ export function DashboardHomePage({ user }: Props) {
         <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
           {Array.from({ length: 5 }).map((_, idx) => {
             const y = topPad + (idx / 4) * chartH;
-            const value = maxAxis - (idx / 4) * spanAxis;
+            const value = realMaxAxis - (idx / 4) * realSpanAxis;
             return (
               <g key={idx}>
                 <line x1={leftPad} y1={y} x2={width - rightPad} y2={y} stroke="#dbe5df" strokeDasharray="4 4" />
@@ -1133,7 +1140,9 @@ function KpiDrillDownModal({
     let rows: Viaje[] = [];
     switch (drillDown.type) {
       case "pendiente":
-        rows = activos.filter((v) => !v.estado_conciliacion);
+        // Igual que _estado_visible_viaje en el backend: conciliado=true manda
+        // aunque estado_conciliacion venga vacío (no debe caer en "pendiente").
+        rows = activos.filter((v) => !v.conciliado && !v.estado_conciliacion);
         break;
       case "en_revision":
         rows = activos.filter(
@@ -1152,16 +1161,19 @@ function KpiDrillDownModal({
       case "manifiestos":
         rows = activos.filter((v) => !!v.manifiesto_numero);
         break;
-      case "placas":
+      case "placas": {
         // Mostrar solo una fila por placa que haya tenido al menos un viaje activo en el período
+        // (normalizado igual que el backend: trim + mayúsculas, ver _summarize_viajes).
         const placasSet = new Set<string>();
         rows = activos.filter((v) => {
-          if (!v.placa) return false;
-          if (placasSet.has(v.placa)) return false;
-          placasSet.add(v.placa);
+          const placa = (v.placa || "").trim().toUpperCase();
+          if (!placa) return false;
+          if (placasSet.has(placa)) return false;
+          placasSet.add(placa);
           return true;
         });
         break;
+      }
       default:
         rows = activos;
     }

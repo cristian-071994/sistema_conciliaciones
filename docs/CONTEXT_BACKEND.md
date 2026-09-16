@@ -15,13 +15,14 @@
 - app/api/routes/: modulos de endpoints.
 - app/models/: entidades SQLAlchemy.
 - app/schemas/: contratos de entrada/salida.
-- app/services/: logica de negocio (audit, pricing, notifications, avansat, visibility).
+- app/services/: logica de negocio (audit, pricing, notifications, avansat, visibility, permisos_service, presence_service, viaje_adicional_conversion, rate_limit).
 - app/db/: base declarativa, engine/session y seed inicial.
 
 ## Endpoints por dominio
 - /api/auth
 - /api/catalogs
 - /api/viajes
+- /api/viajes-adicionales
 - /api/conciliaciones
 - /api/dashboard
 - /api/avansat
@@ -29,6 +30,8 @@
 - /api/vehiculos
 - /api/servicios
 - /api/catalogo-tarifas
+- /api/roles
+- /api/presence
 
 ## Seguridad y reglas
 - Autenticacion JWT por bearer token.

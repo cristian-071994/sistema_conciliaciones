@@ -1,32 +1,34 @@
-# Sistema de Conciliacion - Cointra S.A.S. ---- .
+# Sistema de Conciliacion - Cointra S.A.S.
 
-Implementacion inicial full-stack basada en tus requerimientos funcionales:
+Sistema web de conciliacion de servicios de transporte para Cointra S.A.S., operador logistico intermediario entre un Cliente (dueño de la carga) y un Tercero (transportador).
 
-- Backend: FastAPI + SQLAlchemy + JWT + RBAC
-- Frontend: React + TypeScript + Vite
+- Backend: FastAPI + SQLAlchemy 2 + Alembic + JWT + RBAC (roles fijos + permisos administrativos configurables)
+- Frontend: React + TypeScript + Vite + TailwindCSS
+- App movil: React Native + Expo (solo rol CLIENTE)
 - Base de datos: PostgreSQL (obligatoria en desarrollo y produccion)
+
+**Documentacion completa del sistema:** ver `CLAUDE.md` (arquitectura, reglas de negocio, roles y permisos, base de datos, estructura del proyecto). Este README solo cubre como levantar el entorno local.
 
 ## Estructura
 - `backend/`: API, modelos, reglas de negocio y seguridad por rol
-- `frontend/`: interfaz web para login, conciliaciones e items
+- `frontend/`: interfaz web (Cointra, Cliente, Tercero)
+- `mobile/`: app movil Expo (solo Cliente)
+- `docs/`: contexto adicional por dominio (backend, frontend, base de datos)
 
-## Funcionalidades incluidas en esta version
-- Autenticacion con JWT
-- Roles: `COINTRA`, `CLIENTE`, `TERCERO`
-- Modelo de datos alineado al dbdiagram compartido
-- CRUD base de conciliaciones
-- CRUD base de items conciliables
-- Comentarios por conciliacion/item
-- Ocultamiento de tarifas por rol
-- Calculo de tarifa cliente segun rentabilidad de operacion
-- Seed automatico con datos demo
+## Funcionalidades principales
+- Autenticacion con JWT, roles `COINTRA` (con sub_rol `COINTRA_ADMIN`/`COINTRA_USER`), `CLIENTE`, `TERCERO`
+- Panel de Roles y Permisos: CRUD administrativo configurable por rol (operaciones, clientes, terceros, vehiculos, servicios, catalogo de tarifas, viajes, Avansat, usuarios, roles)
+- Conciliaciones: creacion, items, flujo de revision/aprobacion/devolucion, comentarios, historial
+- Viajes adicionales: solicitud desde web o app movil, tarifa automatica por ruta, manifiesto PDF
+- Catalogo de tarifas por servicio/tipo de vehiculo/ruta, con visibilidad financiera fija por rol
+- Presencia en linea (solo COINTRA_ADMIN)
+- Dashboard de KPIs y graficas por periodo y por rol
+- Integracion Avansat (solo verificacion/cache, no modifica registros) y notificaciones por correo manual
 
-## Usuarios demo
-Se crean al iniciar el backend por primera vez:
+## Usuario administrador (seed inicial)
+Se crea automaticamente al iniciar el backend por primera vez (idempotente):
 
-- Cointra: `cointra@cointra.com` / `cointra123`
-- Cliente: `cliente@cointra.com` / `cliente123`
-- Tercero: `tercero@cointra.com` / `tercero123`
+- `cgutierrez@cointra.com.co` / `admin123` (COINTRA_ADMIN)
 
 ## Levantar backend
 ```powershell
@@ -36,7 +38,7 @@ python -m venv venv
 pip install -r requirements.txt
 copy .env.example .env
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
 
 ## Levantar frontend
@@ -48,17 +50,21 @@ copy .env.example .env
 npm run dev
 ```
 
-## Siguientes pasos recomendados
-- Integrar API real de Avansat
-- Cargue masivo de Excel (`RF-02`) y validaciones (`RF-03`)
-- Flujo de aprobacion parcial por item con auditoria completa
-- Notificaciones por correo y alerta interna
-- Exportacion Excel/PDF por rol
-- Despliegue con contenedores separados (frontend, backend, db)
+## Levantar app movil
+En otra terminal:
+```powershell
+cd mobile
+npm install
+npx expo start
+```
 
 ## Politica de base de datos
 - El proyecto corre solo sobre PostgreSQL.
 - SQLite se mantiene unicamente para migracion historica one-time con el script `backend/scripts/migrate_sqlite_to_postgres.py`.
 - No se debe usar `cointra.db` como base activa del backend.
 
+## Docker (entorno dev completo)
+```bash
+docker compose up --build
+```
 Guia de preparacion para contenedores: `docs/CONTAINERS_READY.md`

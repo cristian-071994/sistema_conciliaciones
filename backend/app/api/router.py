@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import auth, avansat, catalogs, conciliaciones, dashboard, notificaciones, servicios, tarifas, viajes, vehiculos
+from app.api.routes import auth, avansat, catalogs, conciliaciones, dashboard, notificaciones, presence, roles, servicios, tarifas, viajes, viajes_adicionales, vehiculos
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(auth.router)
@@ -13,3 +13,6 @@ api_router.include_router(notificaciones.router)
 api_router.include_router(vehiculos.router)
 api_router.include_router(servicios.router)
 api_router.include_router(tarifas.router)
+api_router.include_router(roles.router)
+api_router.include_router(presence.router)
+api_router.include_router(viajes_adicionales.router)

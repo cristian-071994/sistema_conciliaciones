@@ -6,11 +6,15 @@ from app.models.conciliacion_item import ConciliacionItem
 from app.models.factura_archivo_cliente import FacturaArchivoCliente
 from app.models.historial_cambio import HistorialCambio
 from app.models.notificacion import Notificacion
+from app.models.manifiesto_viaje_adicional import ManifiestoViajeAdicional
 from app.models.operacion import Operacion
 from app.models.catalogo_tarifa import CatalogoTarifa
+from app.models.permiso import Permiso, rol_permisos
+from app.models.rol import Rol
 from app.models.servicio import Servicio
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
+from app.models.viaje_adicional import SolicitudViajeAdicional
 from app.models.viaje import Viaje
 from app.models.tipo_vehiculo import TipoVehiculo
 from app.models.usuario_operacion import usuario_operaciones_asignadas
@@ -37,4 +41,9 @@ __all__ = [
     "CatalogoTarifa",
     "AvansatCache",
     "ManifiestoAvansat",
+    "Rol",
+    "Permiso",
+    "rol_permisos",
+    "SolicitudViajeAdicional",
+    "ManifiestoViajeAdicional",
 ]

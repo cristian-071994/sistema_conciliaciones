@@ -428,6 +428,9 @@ def get_pending_viajes(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede ver viajes pendientes de adjuntar")
+
     conc = db.get(Conciliacion, conciliacion_id)
     if not conc:
         raise HTTPException(status_code=404, detail="Conciliacion no encontrada")
@@ -618,6 +621,12 @@ def get_historial(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
+    # Solo Cointra: valor_anterior/valor_nuevo son texto libre y pueden contener
+    # tarifas/rentabilidad (ver log_change en conciliaciones_items.py), que no se
+    # pueden sanitizar campo por campo como sí hace sanitize_item_for_role().
+    if user.rol != UserRole.COINTRA:
+        raise HTTPException(status_code=403, detail="Solo Cointra puede ver el historial de cambios")
+
     conc = db.get(Conciliacion, conciliacion_id)
     if not conc:
         raise HTTPException(status_code=404, detail="Conciliacion no encontrada")

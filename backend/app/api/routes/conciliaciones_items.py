@@ -105,7 +105,8 @@ def create_item(
         conciliacion_id=conc.id,
     )
     db.commit()
-    return item
+    item_payload = ConciliacionItemOut.model_validate(item).model_dump()
+    return sanitize_item_for_role(item_payload, user.rol)
 
 
 @router.get("/{conciliacion_id}/items", response_model=list[ConciliacionItemOut])
@@ -463,7 +464,8 @@ def update_item_estado(
 
     db.commit()
     db.refresh(item)
-    return item
+    item_payload = ConciliacionItemOut.model_validate(item).model_dump()
+    return sanitize_item_for_role(item_payload, user.rol)
 
 
 @router.patch("/items/{item_id}", response_model=ConciliacionItemOut)
@@ -672,4 +674,5 @@ def cliente_decide_item(
 
     db.commit()
     db.refresh(item)
-    return item
+    item_payload = ConciliacionItemOut.model_validate(item).model_dump()
+    return sanitize_item_for_role(item_payload, user.rol)

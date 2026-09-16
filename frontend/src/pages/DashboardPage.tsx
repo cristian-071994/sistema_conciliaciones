@@ -981,6 +981,27 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     return "VIAJE";
   }
 
+  function verPdfViajeAdicional(solicitudId: number) {
+    // Ver window.open síncrono: ver comentario equivalente en
+    // ViajesAdicionalesPage.tsx (verManifiesto) — evita que el navegador
+    // bloquee el popup por abrirse después de un await.
+    const ventana = window.open("", "_blank", "noopener,noreferrer");
+    void api
+      .verManifiestoViajeAdicional(solicitudId)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        if (ventana) {
+          ventana.location.href = url;
+        } else {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+      })
+      .catch(() => {
+        ventana?.close();
+        window.alert("No se pudo cargar el manifiesto");
+      });
+  }
+
   function isTransportServiceItem(item: Item): boolean {
     const codigo = String(item.servicio_codigo || "").trim().toUpperCase();
     return codigo === "VIAJE" || codigo === "VIAJE_ADICIONAL";
@@ -2717,7 +2738,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-2 py-2 whitespace-nowrap">{v.id}</td>
                         <td className="px-2 py-2 whitespace-nowrap">{v.fecha_servicio}</td>
                         <td className="px-2 py-2 max-w-[150px] truncate" title={v.titulo}>{v.titulo}</td>
-                        <td className="px-2 py-2 max-w-[130px] truncate" title={v.servicio_nombre ?? "Viaje"}>{v.servicio_nombre ?? "Viaje"}</td>
+                        <td className="px-2 py-2 max-w-[130px]">
+                          <div className="truncate" title={v.servicio_nombre ?? "Viaje"}>{v.servicio_nombre ?? "Viaje"}</div>
+                          {!!v.viaje_adicional_solicitud_id && (
+                            <button
+                              type="button"
+                              onClick={() => verPdfViajeAdicional(v.viaje_adicional_solicitud_id as number)}
+                              className="mt-0.5 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success hover:bg-success/20"
+                            >
+                              Ver PDF
+                            </button>
+                          )}
+                        </td>
                         <td className="px-2 py-2 max-w-[170px] truncate" title={operacionById.get(v.operacion_id)?.nombre ?? `Operación #${v.operacion_id}`}>
                           {operacionById.get(v.operacion_id)?.nombre ?? `Operación #${v.operacion_id}`}
                         </td>
@@ -3338,7 +3370,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{v.id}</td>
                         <td className="px-3 py-2">{v.titulo || "-"}</td>
                         <td className="px-3 py-2">{selectedOperacion?.nombre ?? `Operación #${selected.operacion_id}`}</td>
-                        <td className="px-3 py-2 font-medium">{getViajeServicioLabel(v)}</td>
+                        <td className="px-3 py-2 font-medium">
+                          {getViajeServicioLabel(v)}
+                          {v.servicio_codigo === "HORA_EXTRA" && v.horas_cantidad !== null && v.horas_cantidad !== undefined && (
+                            <p className="text-[11px] font-normal text-neutral">{v.horas_cantidad.toFixed(2)} horas</p>
+                          )}
+                        </td>
                         <td className="px-3 py-2">{v.fecha_servicio}</td>
                         <td className="px-3 py-2">
                           {v.origen} - {v.destino}
@@ -3844,6 +3881,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     </td>
                                     <td className="px-3 py-2">
                                       <div className="font-medium text-slate-900">{getItemServicioLabel(item)}</div>
+                                      {isHoraExtraItem(item) && item.horas_cantidad !== null && item.horas_cantidad !== undefined && (
+                                        <p className="text-[11px] text-slate-500">{item.horas_cantidad.toFixed(2)} horas</p>
+                                      )}
                                     </td>
                                     <td className="px-3 py-2">
                                       <span

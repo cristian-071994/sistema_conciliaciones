@@ -8,7 +8,8 @@ from openpyxl.styles import Font, PatternFill
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_user, is_cointra_admin
+from app.api.deps import get_current_user, is_cointra_admin, require_permission
+from app.core.upload_limits import CARGA_MASIVA_EXCEL_MAX_BYTES
 from app.db.session import get_db
 from app.models.conciliacion import Conciliacion
 from app.models.conciliacion_item import ConciliacionItem
@@ -18,11 +19,14 @@ from app.models.catalogo_tarifa import CatalogoTarifa
 from app.models.operacion import Operacion
 from app.models.servicio import Servicio
 from app.models.usuario import Usuario
+from app.models.manifiesto_viaje_adicional import ManifiestoViajeAdicional
 from app.models.usuario_operacion import usuario_operaciones_asignadas
 from app.models.vehiculo import Vehiculo
 from app.models.viaje import Viaje
+from app.models.viaje_adicional import SolicitudViajeAdicional
 from app.schemas.viaje import CargaMasivaFilaPreview, CargaMasivaResultado, ViajeCreate, ViajeOut, ViajeUpdate
 from app.services.avansat_cache import resolve_avansat_from_cache_only
+from app.services.permisos_service import tiene_permiso
 from app.services.pricing import calculate_tarifa_cliente
 
 router = APIRouter(prefix="/viajes", tags=["viajes"])
@@ -51,11 +55,6 @@ def _validate_user_access_operacion(user: Usuario, operacion: Operacion) -> None
             raise HTTPException(status_code=403, detail="Operacion no disponible para este cliente")
     if user.rol == UserRole.TERCERO and user.tercero_id != operacion.tercero_id:
         raise HTTPException(status_code=403, detail="Operacion no disponible para este tercero")
-
-
-def _ensure_cointra_admin(user: Usuario) -> None:
-    if not is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede editar o inactivar viajes")
 
 
 def _ensure_viaje_mutable(viaje: Viaje, db: Session) -> None:
@@ -118,12 +117,12 @@ def create_viaje(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    # Crear viajes: COINTRA_ADMIN, COINTRA_USER, TERCERO
+    # Un Tercero siempre puede cargar sus propios viajes (regla de negocio
+    # fija); un Cointra necesita el permiso "viajes.crear".
     if user.rol == UserRole.TERCERO:
         allowed = True
     elif user.rol == UserRole.COINTRA:
-        # Cualquier sub_rol de Cointra puede crear viajes
-        allowed = True
+        allowed = tiene_permiso(db, user, "viajes.crear")
     else:
         allowed = False
 
@@ -361,6 +360,23 @@ def list_viajes(
     if changed:
         db.commit()
 
+    # Viajes originados desde una solicitud de viaje adicional (app móvil /
+    # web) que ya tiene el PDF del manifiesto adjunto: se expone el id de la
+    # solicitud para que el frontend pueda ofrecer "Ver PDF" reusando
+    # GET /viajes-adicionales/{solicitud_id}/manifiesto.
+    solicitud_id_by_viaje_id: dict[int, int] = {}
+    if viaje_ids:
+        solicitudes_con_manifiesto = (
+            db.query(SolicitudViajeAdicional.viaje_id, SolicitudViajeAdicional.id)
+            .join(
+                ManifiestoViajeAdicional,
+                ManifiestoViajeAdicional.solicitud_id == SolicitudViajeAdicional.id,
+            )
+            .filter(SolicitudViajeAdicional.viaje_id.in_(viaje_ids))
+            .all()
+        )
+        solicitud_id_by_viaje_id = {vid: sid for vid, sid in solicitudes_con_manifiesto if vid is not None}
+
     payload: list[dict] = []
     for viaje in viajes:
         effective_estado = viaje.estado_conciliacion
@@ -382,6 +398,7 @@ def list_viajes(
         out["estado_conciliacion"] = effective_estado
         out["servicio_nombre"] = viaje.servicio.nombre if viaje.servicio else None
         out["servicio_codigo"] = viaje.servicio.codigo if viaje.servicio else None
+        out["viaje_adicional_solicitud_id"] = solicitud_id_by_viaje_id.get(viaje.id)
 
         # Seguridad por API: cada rol solo recibe los valores financieros que le corresponden.
         if user.rol == UserRole.CLIENTE:
@@ -401,10 +418,8 @@ def update_viaje(
     viaje_id: int,
     payload: ViajeUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("viajes.editar")),
 ):
-    _ensure_cointra_admin(user)
-
     viaje = db.get(Viaje, viaje_id)
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
@@ -435,10 +450,8 @@ def update_viaje(
 def deactivate_viaje(
     viaje_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("viajes.desactivar")),
 ):
-    _ensure_cointra_admin(user)
-
     viaje = db.get(Viaje, viaje_id)
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
@@ -453,10 +466,8 @@ def deactivate_viaje(
 def reactivate_viaje(
     viaje_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("viajes.desactivar")),
 ):
-    _ensure_cointra_admin(user)
-
     viaje = db.get(Viaje, viaje_id)
     if not viaje:
         raise HTTPException(status_code=404, detail="Viaje no encontrado")
@@ -666,7 +677,11 @@ async def preview_carga_masiva_viajes(
     user: Usuario = Depends(get_current_user),
 ):
     """Valida el archivo Excel sin guardar nada. Devuelve fila a fila el resultado."""
-    if user.rol not in (UserRole.TERCERO, UserRole.COINTRA):
+    # Un Tercero siempre puede cargar sus propios viajes (regla de negocio
+    # fija); un Cointra necesita el permiso "viajes.crear".
+    if user.rol != UserRole.TERCERO and not (
+        user.rol == UserRole.COINTRA and tiene_permiso(db, user, "viajes.crear")
+    ):
         raise HTTPException(status_code=403, detail="No tiene permisos para cargar viajes")
 
     operacion = db.get(Operacion, operacion_id)
@@ -674,7 +689,9 @@ async def preview_carga_masiva_viajes(
         raise HTTPException(status_code=404, detail="Operacion no encontrada")
     _validate_user_access_operacion(user, operacion)
 
-    content = await file.read()
+    content = await file.read(CARGA_MASIVA_EXCEL_MAX_BYTES + 1)
+    if len(content) > CARGA_MASIVA_EXCEL_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="El archivo supera el tamaño máximo permitido (20 MB)")
     try:
         wb = load_workbook(filename=BytesIO(content), data_only=True)
     except Exception:
@@ -826,7 +843,11 @@ async def bulk_upload_viajes(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    if user.rol not in (UserRole.TERCERO, UserRole.COINTRA):
+    # Un Tercero siempre puede cargar sus propios viajes (regla de negocio
+    # fija); un Cointra necesita el permiso "viajes.crear".
+    if user.rol != UserRole.TERCERO and not (
+        user.rol == UserRole.COINTRA and tiene_permiso(db, user, "viajes.crear")
+    ):
         raise HTTPException(status_code=403, detail="No tiene permisos para cargar viajes")
 
     operacion = db.get(Operacion, operacion_id)
@@ -834,7 +855,9 @@ async def bulk_upload_viajes(
         raise HTTPException(status_code=404, detail="Operacion no encontrada")
     _validate_user_access_operacion(user, operacion)
 
-    content = await file.read()
+    content = await file.read(CARGA_MASIVA_EXCEL_MAX_BYTES + 1)
+    if len(content) > CARGA_MASIVA_EXCEL_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="El archivo supera el tamaño máximo permitido (20 MB)")
     try:
         wb = load_workbook(filename=BytesIO(content), data_only=True)
     except Exception:

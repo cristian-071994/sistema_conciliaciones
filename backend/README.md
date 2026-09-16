@@ -48,10 +48,10 @@ alembic upgrade head
 Luego inicia la API:
 
 ```powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
 
-API docs: http://127.0.0.1:8000/docs
+API docs: http://127.0.0.1:8001/docs
 
 ## Migrar datos historicos de SQLite a PostgreSQL (solo legado)
 Si tienes datos historicos en `cointra.db`, puedes copiarlos a PostgreSQL una sola vez:

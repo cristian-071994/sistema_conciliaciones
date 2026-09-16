@@ -17,6 +17,7 @@ from app.models.viaje import Viaje
 from app.schemas.conciliacion import ConciliacionOut
 from app.services.audit import log_change
 from app.services.avansat_cache import resolve_avansat_from_cache_only
+from app.services.pricing import DEFAULT_RENTABILIDAD_PCT, calculate_tarifa_cliente_default
 
 TRANSPORTE_SERVICE_CODES = {"VIAJE", "VIAJE_ADICIONAL"}
 
@@ -37,18 +38,23 @@ def _should_mark_conciliado(estado: object) -> bool:
 
 
 def _default_viaje_item_financials(viaje: Viaje) -> tuple[float | None, float | None, float]:
-    default_pct = 10.0
+    """La tarifa que manda es tarifa_tercero: la tarifa_cliente del ítem
+    SIEMPRE se recalcula desde ahí con el % de rentabilidad por defecto
+    (DEFAULT_RENTABILIDAD_PCT), sin importar con qué % se haya calculado la
+    tarifa_cliente del viaje original (p.ej. el % propio de la operación).
+    Ajustar el % ya es una decisión que se toma después, dentro de la
+    conciliación (PATCH .../items/{id})."""
     tarifa_tercero = float(viaje.tarifa_tercero) if viaje.tarifa_tercero is not None else None
 
     if tarifa_tercero is not None:
-        tarifa_cliente = tarifa_tercero / (1 - default_pct / 100)
-        return tarifa_tercero, tarifa_cliente, default_pct
+        tarifa_cliente, pct = calculate_tarifa_cliente_default(tarifa_tercero)
+        return tarifa_tercero, tarifa_cliente, pct
 
     tarifa_cliente = float(viaje.tarifa_cliente) if viaje.tarifa_cliente is not None else None
     if tarifa_cliente is not None:
-        tarifa_tercero = tarifa_cliente * (1 - default_pct / 100)
+        tarifa_tercero = tarifa_cliente * (1 - DEFAULT_RENTABILIDAD_PCT / 100)
 
-    return tarifa_tercero, tarifa_cliente, default_pct
+    return tarifa_tercero, tarifa_cliente, DEFAULT_RENTABILIDAD_PCT
 
 
 def _sync_viajes_conciliado_por_estado(db: Session, conciliacion_id: int, estado: object) -> None:

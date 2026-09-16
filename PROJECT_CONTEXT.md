@@ -18,11 +18,15 @@ Sistema web para gestionar conciliaciones operativas y financieras entre Cointra
 
 ## Modulos funcionales activos
 - Autenticacion y gestion de usuario.
-- Catalogos: clientes, terceros, operaciones, servicios, vehiculos, tipos de vehiculo, tarifas.
+- Catalogos: clientes, terceros, operaciones, servicios, vehiculos, tipos de vehiculo, catalogo de tarifas (incluye tarifas por ruta para viajes adicionales).
+- Roles y Permisos: panel administrativo configurable (ademas de la clasificacion de negocio fija COINTRA/CLIENTE/TERCERO).
+- Presencia en linea (solo COINTRA_ADMIN).
+- Viajes adicionales: solicitud, tarifa, manifiesto y conversion a viaje/conciliacion.
 - Viajes y conciliaciones (items, estados, manifiestos, historial, comentarios).
 - Notificaciones internas y envio de correos manuales.
 - Dashboard de KPIs y graficas.
 - Avansat: consulta, cache y sincronizacion.
+- App movil (React Native + Expo) para el rol CLIENTE.
 
 ## Restricciones de visibilidad
 - COINTRA: visibilidad financiera completa.

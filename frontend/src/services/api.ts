@@ -1,4 +1,4 @@
-import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Servicio, TarifaLookup, Tercero, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -48,6 +48,9 @@ async function request<T>(
       // fallback to raw text
     }
     throw new Error(message || "Error en la solicitud");
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return response.json();
 }
@@ -146,13 +149,20 @@ export const api = {
       cliente_id?: number;
       tercero_id?: number;
       nombre?: string;
-      porcentaje_rentabilidad?: number;
       cliente_usuario_ids?: number[];
     }
   ) =>
     request<Operacion>(`/catalogs/operaciones/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
+    }),
+  // Endpoint separado a proposito: cambiar la rentabilidad de una operacion
+  // requiere el permiso "operaciones.rentabilidad", independiente de
+  // "operaciones.editar" que gobierna el resto de los campos.
+  editarOperacionRentabilidad: (id: number, porcentaje_rentabilidad: number) =>
+    request<Operacion>(`/catalogs/operaciones/${id}/rentabilidad`, {
+      method: "PATCH",
+      body: JSON.stringify({ porcentaje_rentabilidad }),
     }),
   inactivarOperacion: (id: number) =>
     request<{ ok: boolean }>(`/catalogs/operaciones/${id}`, {
@@ -654,6 +664,8 @@ export const api = {
   upsertCatalogoTarifa: (payload: {
     servicio_id: number;
     tipo_vehiculo_id: number;
+    origen?: string;
+    destino?: string;
     tarifa_cliente: number;
     rentabilidad_pct: number;
   }) =>
@@ -666,6 +678,8 @@ export const api = {
     payload: {
       servicio_id?: number;
       tipo_vehiculo_id?: number;
+      origen?: string;
+      destino?: string;
       tarifa_cliente?: number;
       rentabilidad_pct?: number;
       activo?: boolean;
@@ -685,4 +699,109 @@ export const api = {
     }),
   lookupTarifaCatalogo: (servicioId: number, tipoVehiculoId: number) =>
     request<TarifaLookup>(`/catalogo-tarifas/lookup?servicio_id=${servicioId}&tipo_vehiculo_id=${tipoVehiculoId}`),
+  roles: () => request<Rol[]>("/roles"),
+  permisosCatalogo: () => request<Permiso[]>("/roles/permisos"),
+  actualizarPermisosRol: (rolId: number, permisoClaves: string[]) =>
+    request<Rol>(`/roles/${rolId}/permisos`, {
+      method: "PATCH",
+      body: JSON.stringify({ permiso_claves: permisoClaves }),
+    }),
+  presenceHeartbeat: () =>
+    request<void>("/presence/heartbeat", { method: "POST" }, { skipUnauthorizedHandler: true }),
+  presenceLogout: () =>
+    request<void>("/presence/logout", { method: "POST" }, { skipUnauthorizedHandler: true }),
+  presenceOnline: () => request<UsuarioPresence[]>("/presence/online"),
+  vehiculosDisponiblesViajeAdicional: (operacionId: number) =>
+    request<VehiculoDisponible[]>(`/viajes-adicionales/vehiculos-disponibles?operacion_id=${operacionId}`),
+  rutasTarifaViajeAdicional: () => request<RutaTarifa[]>("/catalogo-tarifas/rutas"),
+  lookupTarifaRutaViajeAdicional: (origen: string, destino: string, tipoVehiculoId: number) =>
+    request<TarifaLookup>(
+      `/catalogo-tarifas/lookup?servicio_codigo=VIAJE_ADICIONAL&tipo_vehiculo_id=${tipoVehiculoId}` +
+        `&origen=${encodeURIComponent(origen)}&destino=${encodeURIComponent(destino)}`
+    ),
+  crearSolicitudViajeAdicional: (payload: {
+    operacion_id: number;
+    vehiculo_id: number;
+    titulo: string;
+    fecha_viaje: string;
+    origen: string;
+    destino: string;
+    producto: string;
+    observaciones?: string;
+  }) =>
+    request<SolicitudViajeAdicional>("/viajes-adicionales", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  solicitudesViajeAdicional: (params?: {
+    estado?: "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO";
+    sin_manifiesto?: boolean;
+    con_tarifa?: boolean;
+    fecha_desde?: string;
+    fecha_hasta?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.estado) search.set("estado", params.estado);
+    if (typeof params?.sin_manifiesto === "boolean") search.set("sin_manifiesto", String(params.sin_manifiesto));
+    if (typeof params?.con_tarifa === "boolean") search.set("con_tarifa", String(params.con_tarifa));
+    if (params?.fecha_desde) search.set("fecha_desde", params.fecha_desde);
+    if (params?.fecha_hasta) search.set("fecha_hasta", params.fecha_hasta);
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return request<SolicitudViajeAdicional[]>(`/viajes-adicionales${suffix}`);
+  },
+  actualizarEstadoSolicitudViajeAdicional: (
+    id: number,
+    estado: "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO"
+  ) =>
+    request<SolicitudViajeAdicional>(`/viajes-adicionales/${id}/estado`, {
+      method: "PATCH",
+      body: JSON.stringify({ estado }),
+    }),
+  actualizarTarifaSolicitudViajeAdicional: (id: number, tarifaTercero: number) =>
+    request<SolicitudViajeAdicional>(`/viajes-adicionales/${id}/tarifa`, {
+      method: "PATCH",
+      body: JSON.stringify({ tarifa_tercero: tarifaTercero }),
+    }),
+  subirManifiestoViajeAdicional: async (
+    id: number,
+    archivo: File,
+    numeroManifiesto: string
+  ): Promise<SolicitudViajeAdicional> => {
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const form = new FormData();
+    form.append("archivo", archivo);
+    form.append("numero_manifiesto", numeroManifiesto);
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${API_URL}/viajes-adicionales/${id}/manifiesto`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
+    if (!response.ok) {
+      const raw = await response.text();
+      if (response.status === 401 && unauthorizedHandler) unauthorizedHandler();
+      let message = raw;
+      try { const p = JSON.parse(raw); if (typeof p.detail === "string") message = p.detail; } catch { /* noop */ }
+      throw new Error(message || "Error al subir el manifiesto");
+    }
+    return response.json() as Promise<SolicitudViajeAdicional>;
+  },
+  actualizarNumeroManifiestoViajeAdicional: (id: number, numeroManifiesto: string) =>
+    request<SolicitudViajeAdicional>(`/viajes-adicionales/${id}/manifiesto/numero`, {
+      method: "PATCH",
+      body: JSON.stringify({ numero_manifiesto: numeroManifiesto }),
+    }),
+  eliminarManifiestoViajeAdicional: (id: number) =>
+    request<SolicitudViajeAdicional>(`/viajes-adicionales/${id}/manifiesto`, {
+      method: "DELETE",
+    }),
+  verManifiestoViajeAdicional: async (id: number): Promise<Blob> => {
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${API_URL}/viajes-adicionales/${id}/manifiesto`, { headers });
+    if (!response.ok) throw new Error("No se pudo cargar el manifiesto");
+    return response.blob();
+  },
 };

@@ -1,0 +1,14 @@
+# Igual que backend/.dockerignore: nunca copiar .env a la imagen. Aquí solo
+# guarda una URL (sin secretos), pero la config real igual debe inyectarse
+# por build ARG (ver Dockerfile.prod), no por archivo copiado.
+.env
+.env.*
+!.env.example
+
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+README.md

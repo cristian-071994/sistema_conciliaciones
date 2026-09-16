@@ -40,8 +40,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+DEV_SECRET_KEY_DEFAULT = "dev_secret_change_me"
+
+
 @app.on_event("startup")
 def startup_event():
+    if settings.secret_key == DEV_SECRET_KEY_DEFAULT:
+        # Firmar JWTs con un secreto público y predecible equivale a no tener
+        # autenticación. Antes esto arrancaba igual si faltaba SECRET_KEY en
+        # el entorno; ahora falla explícito en vez de exponerlo en silencio.
+        raise RuntimeError(
+            "SECRET_KEY no está configurada (usa el valor por defecto del código). "
+            "Define una SECRET_KEY real en el .env antes de iniciar la API."
+        )
+
     inspector = inspect(engine)
     if not inspector.has_table("usuarios"):
         raise RuntimeError(

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_permission
 from app.db.session import get_db
 from app.models.enums import CointraSubRol, UserRole
 from app.models.tercero import Tercero
@@ -9,6 +9,7 @@ from app.models.tipo_vehiculo import TipoVehiculo
 from app.models.usuario import Usuario
 from app.models.vehiculo import Vehiculo
 from app.schemas.vehiculo import TipoVehiculoCreate, TipoVehiculoOut, VehiculoCreate, VehiculoOut
+from app.services.permisos_service import tiene_permiso
 
 router = APIRouter(prefix="/vehiculos", tags=["vehiculos"])
 
@@ -31,8 +32,9 @@ def create_tipo_vehiculo(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    # Crear tipos de vehiculo: Cointra (ADMIN/USER) y Tercero pueden proponer
-    if user.rol not in [UserRole.COINTRA, UserRole.TERCERO]:
+    # Un Tercero siempre puede proponer tipos de vehiculo (regla de negocio
+    # fija); un Cointra necesita el permiso "tipos_vehiculo.crear".
+    if user.rol != UserRole.TERCERO and not tiene_permiso(db, user, "tipos_vehiculo.crear"):
         raise HTTPException(status_code=403, detail="No tiene permisos para crear tipos de vehiculo")
 
     existing = db.query(TipoVehiculo).filter(TipoVehiculo.nombre == payload.nombre).first()
@@ -51,11 +53,8 @@ def update_tipo_vehiculo(
     tipo_id: int,
     payload: TipoVehiculoCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("tipos_vehiculo.editar")),
 ):
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede editar tipos de vehiculo")
-
     tipo = db.get(TipoVehiculo, tipo_id)
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de vehiculo no encontrado")
@@ -70,11 +69,8 @@ def update_tipo_vehiculo(
 def delete_tipo_vehiculo(
     tipo_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("tipos_vehiculo.desactivar")),
 ):
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede eliminar tipos de vehiculo")
-
     tipo = db.get(TipoVehiculo, tipo_id)
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de vehiculo no encontrado")
@@ -89,11 +85,8 @@ def delete_tipo_vehiculo(
 def reactivate_tipo_vehiculo(
     tipo_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("tipos_vehiculo.desactivar")),
 ):
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede reactivar tipos de vehiculo")
-
     tipo = db.get(TipoVehiculo, tipo_id)
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de vehiculo no encontrado")
@@ -119,8 +112,9 @@ def create_vehiculo(
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
-    # Crear vehiculos: COINTRA_ADMIN, COINTRA_USER, TERCERO
-    if user.rol not in [UserRole.COINTRA, UserRole.TERCERO]:
+    # Un Tercero siempre puede registrar vehiculos propios (regla de negocio
+    # fija); un Cointra necesita el permiso "vehiculos.crear".
+    if user.rol != UserRole.TERCERO and not tiene_permiso(db, user, "vehiculos.crear"):
         raise HTTPException(status_code=403, detail="No tiene permisos para crear vehiculos")
 
     tipo = db.get(TipoVehiculo, payload.tipo_vehiculo_id)
@@ -168,12 +162,8 @@ def update_vehiculo(
     vehiculo_id: int,
     payload: VehiculoCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("vehiculos.editar")),
 ):
-    # Editar vehiculos: solo COINTRA_ADMIN
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede editar vehiculos")
-
     vehiculo = db.get(Vehiculo, vehiculo_id)
     if not vehiculo:
         raise HTTPException(status_code=404, detail="Vehiculo no encontrado")
@@ -207,12 +197,8 @@ def update_vehiculo(
 def delete_vehiculo(
     vehiculo_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("vehiculos.desactivar")),
 ):
-    # Eliminar vehiculos: solo COINTRA_ADMIN (borrado logico)
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede eliminar vehiculos")
-
     vehiculo = db.get(Vehiculo, vehiculo_id)
     if not vehiculo:
         raise HTTPException(status_code=404, detail="Vehiculo no encontrado")
@@ -226,11 +212,8 @@ def delete_vehiculo(
 def reactivate_vehiculo(
     vehiculo_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("vehiculos.desactivar")),
 ):
-    if not _is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo Cointra Admin puede reactivar vehiculos")
-
     vehiculo = db.get(Vehiculo, vehiculo_id)
     if not vehiculo:
         raise HTTPException(status_code=404, detail="Vehiculo no encontrado")

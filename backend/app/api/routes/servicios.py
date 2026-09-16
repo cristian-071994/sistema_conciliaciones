@@ -4,7 +4,7 @@ import unicodedata
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, is_cointra_admin
+from app.api.deps import get_current_user, is_cointra_admin, require_permission
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.servicio import Servicio
@@ -12,11 +12,6 @@ from app.models.usuario import Usuario
 from app.schemas.servicio import ServicioCreate, ServicioOut, ServicioUpdate
 
 router = APIRouter(prefix="/servicios", tags=["servicios"])
-
-
-def _ensure_cointra_admin(user: Usuario) -> None:
-    if not is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede gestionar servicios")
 
 
 def _to_codigo(nombre: str) -> str:
@@ -37,10 +32,8 @@ def list_servicios(db: Session = Depends(get_db), user: Usuario = Depends(get_cu
 def create_servicio(
     payload: ServicioCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("servicios.crear")),
 ):
-    _ensure_cointra_admin(user)
-
     nombre = payload.nombre.strip()
     codigo = _to_codigo(nombre)
     if not codigo:
@@ -70,10 +63,8 @@ def update_servicio(
     servicio_id: int,
     payload: ServicioUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("servicios.editar")),
 ):
-    _ensure_cointra_admin(user)
-
     servicio = db.get(Servicio, servicio_id)
     if not servicio:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
@@ -103,10 +94,8 @@ def update_servicio(
 def deactivate_servicio(
     servicio_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("servicios.desactivar")),
 ):
-    _ensure_cointra_admin(user)
-
     servicio = db.get(Servicio, servicio_id)
     if not servicio:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
@@ -120,10 +109,8 @@ def deactivate_servicio(
 def reactivate_servicio(
     servicio_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("servicios.desactivar")),
 ):
-    _ensure_cointra_admin(user)
-
     servicio = db.get(Servicio, servicio_id)
     if not servicio:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")

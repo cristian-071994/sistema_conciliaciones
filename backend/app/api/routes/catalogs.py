@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, is_cointra_admin
+from app.api.deps import get_current_user, is_cointra_admin, require_permission
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.cliente import Cliente
@@ -10,6 +10,7 @@ from app.models.operacion import Operacion
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
+from app.services.permisos_service import sync_rol_id
 from app.schemas.catalogs import (
     ClienteCreate,
     ClienteOut,
@@ -25,11 +26,6 @@ from app.schemas.catalogs import (
 from app.schemas.user import UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/catalogs", tags=["catalogs"])
-
-
-def _ensure_cointra_admin(user: Usuario) -> None:
-    if not is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede editar o inactivar")
 
 
 def _serialize_user(usuario: Usuario) -> dict:
@@ -101,11 +97,8 @@ def get_clientes(db: Session = Depends(get_db), _: Usuario = Depends(get_current
 def create_cliente(
     payload: ClienteCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("clientes.crear")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede crear clientes")
-
     nit = payload.nit.strip()
     if db.query(Cliente).filter(Cliente.nit == nit).first():
         raise HTTPException(status_code=400, detail="Ya existe un cliente con ese NIT")
@@ -130,11 +123,8 @@ def get_terceros(db: Session = Depends(get_db), _: Usuario = Depends(get_current
 def create_tercero(
     payload: TerceroCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("terceros.crear")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede crear terceros")
-
     nit = payload.nit.strip()
     if db.query(Tercero).filter(Tercero.nit == nit).first():
         raise HTTPException(status_code=400, detail="Ya existe un tercero con ese NIT")
@@ -166,11 +156,8 @@ def get_operaciones(db: Session = Depends(get_db), user: Usuario = Depends(get_c
 def create_operacion(
     payload: OperacionCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("operaciones.crear")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede crear operaciones")
-
     cliente = db.get(Cliente, payload.cliente_id)
     if not cliente or not cliente.activo:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -195,9 +182,7 @@ def create_operacion(
 
 
 @router.get("/usuarios", response_model=list[UserOut])
-def get_usuarios(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
-    if user.rol != UserRole.COINTRA or user.sub_rol != CointraSubRol.COINTRA_ADMIN:
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede listar usuarios")
+def get_usuarios(db: Session = Depends(get_db), user: Usuario = Depends(require_permission("usuarios.ver"))):
     usuarios = db.query(Usuario).order_by(Usuario.id.desc()).all()
     return [_serialize_user(u) for u in usuarios]
 
@@ -222,9 +207,8 @@ def update_cliente(
     cliente_id: int,
     payload: ClienteUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("clientes.editar")),
 ):
-    _ensure_cointra_admin(user)
     cliente = db.get(Cliente, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -250,9 +234,8 @@ def update_cliente(
 def deactivate_cliente(
     cliente_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("clientes.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     cliente = db.get(Cliente, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -265,9 +248,8 @@ def deactivate_cliente(
 def reactivate_cliente(
     cliente_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("clientes.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     cliente = db.get(Cliente, cliente_id)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -281,9 +263,8 @@ def update_tercero(
     tercero_id: int,
     payload: TerceroUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("terceros.editar")),
 ):
-    _ensure_cointra_admin(user)
     tercero = db.get(Tercero, tercero_id)
     if not tercero:
         raise HTTPException(status_code=404, detail="Tercero no encontrado")
@@ -309,9 +290,8 @@ def update_tercero(
 def deactivate_tercero(
     tercero_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("terceros.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     tercero = db.get(Tercero, tercero_id)
     if not tercero:
         raise HTTPException(status_code=404, detail="Tercero no encontrado")
@@ -324,9 +304,8 @@ def deactivate_tercero(
 def reactivate_tercero(
     tercero_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("terceros.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     tercero = db.get(Tercero, tercero_id)
     if not tercero:
         raise HTTPException(status_code=404, detail="Tercero no encontrado")
@@ -340,9 +319,8 @@ def update_operacion(
     operacion_id: int,
     payload: OperacionUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("operaciones.editar")),
 ):
-    _ensure_cointra_admin(user)
     operacion = db.get(Operacion, operacion_id)
     if not operacion:
         raise HTTPException(status_code=404, detail="Operacion no encontrada")
@@ -378,9 +356,8 @@ def update_operacion(
 def deactivate_operacion(
     operacion_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("operaciones.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     operacion = db.get(Operacion, operacion_id)
     if not operacion:
         raise HTTPException(status_code=404, detail="Operacion no encontrada")
@@ -393,9 +370,8 @@ def deactivate_operacion(
 def reactivate_operacion(
     operacion_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("operaciones.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     operacion = db.get(Operacion, operacion_id)
     if not operacion:
         raise HTTPException(status_code=404, detail="Operacion no encontrada")
@@ -409,9 +385,8 @@ def update_usuario(
     usuario_id: int,
     payload: UserUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("usuarios.editar")),
 ):
-    _ensure_cointra_admin(user)
     usuario = db.get(Usuario, usuario_id)
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -488,6 +463,7 @@ def update_usuario(
     else:
         usuario.operaciones_asignadas = []
 
+    sync_rol_id(db, usuario)
     db.commit()
     db.refresh(usuario)
     return _serialize_user(usuario)
@@ -497,9 +473,8 @@ def update_usuario(
 def deactivate_usuario(
     usuario_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("usuarios.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     usuario = db.get(Usuario, usuario_id)
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -512,9 +487,8 @@ def deactivate_usuario(
 def reactivate_usuario(
     usuario_id: int,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("usuarios.desactivar")),
 ):
-    _ensure_cointra_admin(user)
     usuario = db.get(Usuario, usuario_id)
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -527,11 +501,8 @@ def reactivate_usuario(
 def create_usuario(
     payload: UserCreate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("usuarios.crear")),
 ):
-    if user.rol != UserRole.COINTRA or user.sub_rol != CointraSubRol.COINTRA_ADMIN:
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede crear usuarios")
-
     email = payload.email.strip().lower()
     if db.query(Usuario).filter(Usuario.email == email).first():
         raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
@@ -572,6 +543,7 @@ def create_usuario(
     )
     db.add(usuario)
     db.flush()
+    sync_rol_id(db, usuario)
 
     if payload.rol == UserRole.CLIENTE:
         if payload.operacion_ids:
@@ -600,12 +572,8 @@ def update_operacion_rentabilidad(
     operacion_id: int,
     payload: OperacionRentabilidadUpdate,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("operaciones.rentabilidad")),
 ):
-    # Gestionar operaciones: solo Cointra (ADMIN/USER) a nivel de backend
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede configurar rentabilidad")
-
     operacion = db.get(Operacion, operacion_id)
     if not operacion:
         raise HTTPException(status_code=404, detail="Operacion no encontrada")

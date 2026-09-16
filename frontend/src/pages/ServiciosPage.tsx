@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import type { Servicio, User } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -37,7 +38,8 @@ export function ServiciosPage({ user }: Props) {
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<{ id: number; action: "inactivar" | "reactivar" } | null>(null);
 
-  const isCointraAdmin = user.rol === "COINTRA" && user.sub_rol === "COINTRA_ADMIN";
+  const puedeCrear = hasPermiso(user, "servicios.crear");
+  const puedeDesactivar = hasPermiso(user, "servicios.desactivar");
   const codigoGenerado = toCodigo(nombre);
 
   async function loadData() {
@@ -89,16 +91,9 @@ export function ServiciosPage({ user }: Props) {
     }
   }
 
-  if (!isCointraAdmin) {
-    return (
-      <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
-        <p className="text-sm text-danger">No tienes permisos para ver este modulo.</p>
-      </section>
-    );
-  }
-
   return (
     <div className="space-y-6">
+      {puedeCrear && (
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
         <h2 className="mb-2 text-base font-semibold text-slate-900">Modulo Servicios</h2>
         <p className="mb-4 text-sm text-neutral">
@@ -137,6 +132,7 @@ export function ServiciosPage({ user }: Props) {
           </label>
         </form>
       </section>
+      )}
 
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Servicios configurados</h3>
@@ -152,7 +148,7 @@ export function ServiciosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Codigo</th>
                   <th className="border-b border-border px-3 py-2 text-left">Requiere origen/destino</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  <th className="border-b border-border px-3 py-2 text-left">Accion</th>
+                  {puedeDesactivar && <th className="border-b border-border px-3 py-2 text-left">Accion</th>}
                 </tr>
               </thead>
               <tbody>
@@ -171,17 +167,19 @@ export function ServiciosPage({ user }: Props) {
                         {row.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirm({ id: row.id, action: row.activo ? "inactivar" : "reactivar" })
-                        }
-                        className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                      >
-                        {row.activo ? "Inactivar" : "Reactivar"}
-                      </button>
-                    </td>
+                    {puedeDesactivar && (
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirm({ id: row.id, action: row.activo ? "inactivar" : "reactivar" })
+                          }
+                          className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                          {row.activo ? "Inactivar" : "Reactivar"}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

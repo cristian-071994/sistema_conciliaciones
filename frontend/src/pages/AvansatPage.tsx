@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../services/api";
 import { AvansatCacheRow, AvansatCacheStats, User } from "../types";
+import { hasPermiso } from "../utils/permisos";
 
 interface Props {
   user: User;
@@ -24,6 +25,9 @@ function toSpanishError(error: unknown): string {
 }
 
 export function AvansatPage({ user }: Props) {
+  const puedeConsultar = hasPermiso(user, "avansat.consultar");
+  const puedeSincronizar = hasPermiso(user, "avansat.sincronizar");
+  const puedeSincronizarHistorico = hasPermiso(user, "avansat.sincronizar_historico");
   const [rows, setRows] = useState<AvansatCacheRow[]>([]);
   const [totalRows, setTotalRows] = useState(0);
   const [page, setPage] = useState(1);
@@ -49,6 +53,7 @@ export function AvansatPage({ user }: Props) {
   const [cacheStats, setCacheStats] = useState<AvansatCacheStats | null>(null);
 
   async function loadCache(nextPage = page, overrideFilters?: typeof filters) {
+    if (!puedeConsultar) return;
     setError("");
     setLoading(true);
     try {
@@ -76,18 +81,20 @@ export function AvansatPage({ user }: Props) {
   }
 
   useEffect(() => {
+    if (!puedeConsultar) return;
     void loadCache(1);
     api.avansatCacheStats().then(setCacheStats).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [puedeConsultar]);
 
   useEffect(() => {
+    if (!puedeConsultar) return;
     const timer = setTimeout(() => {
       void loadCache(1);
     }, 350);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  }, [filters, puedeConsultar]);
 
   async function runSyncMesAnterior() {
     setSyncMessage("");
@@ -242,14 +249,6 @@ export function AvansatPage({ user }: Props) {
     );
   }
 
-  if (user.rol !== "COINTRA") {
-    return (
-      <section className="rounded-xl border border-border bg-white/90 p-5 shadow-sm">
-        <p className="text-sm font-semibold text-danger">No tienes permisos para este modulo.</p>
-      </section>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
@@ -260,7 +259,7 @@ export function AvansatPage({ user }: Props) {
         </p>
 
         <div className="mt-4 flex flex-wrap gap-3">
-          {user.sub_rol === "COINTRA_ADMIN" && (
+          {puedeSincronizarHistorico && (
             <button
               type="button"
               onClick={() => void runSyncMesAnterior()}
@@ -270,34 +269,41 @@ export function AvansatPage({ user }: Props) {
               {syncingMesAnterior ? "Sincronizando..." : "Sincronizar desde el mes anterior..."}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => void runSyncAyerHoy()}
-            disabled={syncingMesAnterior || syncingAyerHoy}
-            className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition enabled:hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {syncingAyerHoy ? "Sincronizando..." : "Sincronizar ayer y hoy..."}
-          </button>
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-          >
-            Borrar filtros
-          </button>
-          <button
-            type="button"
-            onClick={() => void loadCache()}
-            className="rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-          >
-            Recargar
-          </button>
+          {puedeSincronizar && (
+            <button
+              type="button"
+              onClick={() => void runSyncAyerHoy()}
+              disabled={syncingMesAnterior || syncingAyerHoy}
+              className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition enabled:hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {syncingAyerHoy ? "Sincronizando..." : "Sincronizar ayer y hoy..."}
+            </button>
+          )}
+          {puedeConsultar && (
+            <>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                Borrar filtros
+              </button>
+              <button
+                type="button"
+                onClick={() => void loadCache()}
+                className="rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                Recargar
+              </button>
+            </>
+          )}
         </div>
 
         {error && <p className="mt-3 text-sm font-medium text-danger">{error}</p>}
         {syncMessage && <p className="mt-3 text-sm font-medium text-emerald-700">{syncMessage}</p>}
       </section>
 
+      {puedeConsultar && (
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-lg font-bold text-slate-900">Manifiestos almacenados</h3>
@@ -386,6 +392,7 @@ export function AvansatPage({ user }: Props) {
           {renderPaginationControls()}
         </div>
       </section>
+      )}
     </div>
   );
 }

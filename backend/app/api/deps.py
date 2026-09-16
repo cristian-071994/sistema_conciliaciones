@@ -8,6 +8,7 @@ from app.core.security import ALGORITHM
 from app.db.session import get_db
 from app.models.enums import CointraSubRol, UserRole
 from app.models.usuario import Usuario
+from app.services.permisos_service import tiene_permiso
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -49,3 +50,18 @@ def require_roles(*roles: UserRole):
 
 def is_cointra_admin(user: Usuario) -> bool:
     return user.rol == UserRole.COINTRA and user.sub_rol == CointraSubRol.COINTRA_ADMIN
+
+
+def require_permission(clave: str):
+    """Gobierna acciones ADMINISTRATIVAS (usuarios, roles, presencia) vía el
+    perfil de permisos dinámico de usuario.rol_id. No reemplaza los chequeos
+    de UserRole/sub_rol ya existentes en el resto de endpoints — esos siguen
+    fijos porque son reglas de negocio de conciliación, no permisos editables.
+    """
+
+    def dependency(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)) -> Usuario:
+        if not tiene_permiso(db, user, clave):
+            raise HTTPException(status_code=403, detail="No tienes permiso para realizar esta acción")
+        return user
+
+    return dependency

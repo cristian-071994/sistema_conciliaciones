@@ -3,13 +3,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, exists
 
-from app.api.deps import get_current_user, is_cointra_admin
+from app.api.deps import require_permission
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.conciliacion_item import ConciliacionItem
 from app.models.conciliacion_manifiesto import ConciliacionManifiesto
 from app.models.manifiesto_avansat import ManifiestoAvansat
-from app.models.enums import UserRole
 from app.models.usuario import Usuario
 from app.services.avansat import fetch_avansat_by_manifiesto
 from app.services.avansat_cache import sync_avansat_previous_month_to_today, sync_avansat_yesterday_today
@@ -67,11 +66,8 @@ class AvansatCacheListOut(BaseModel):
 @router.get("/manifiesto/{manifiesto}", response_model=AvansatLookupOut)
 def consultar_manifiesto(
     manifiesto: str,
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.consultar")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede consultar Avansat")
-
     value = manifiesto.strip()
     if not value:
         raise HTTPException(status_code=400, detail="Debes enviar un manifiesto valido")
@@ -89,11 +85,8 @@ def consultar_manifiesto(
 @router.post("/sync-mes-anterior", response_model=AvansatSyncOut)
 def sync_mes_anterior_avansat(
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.sincronizar_historico")),
 ):
-    if not is_cointra_admin(user):
-        raise HTTPException(status_code=403, detail="Solo COINTRA_ADMIN puede sincronizar desde mes anterior")
-
     if not settings.avansat_enabled:
         raise HTTPException(status_code=503, detail="Avansat deshabilitado en configuracion")
 
@@ -103,11 +96,8 @@ def sync_mes_anterior_avansat(
 @router.post("/sync-ayer-hoy", response_model=AvansatSyncOut)
 def sync_ayer_hoy_avansat(
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.sincronizar")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo usuarios Cointra pueden sincronizar Avansat")
-
     if not settings.avansat_enabled:
         raise HTTPException(status_code=503, detail="Avansat deshabilitado en configuracion")
 
@@ -117,11 +107,8 @@ def sync_ayer_hoy_avansat(
 @router.post("/sync-cache", response_model=AvansatSyncOut)
 def sync_cache_avansat_legacy(
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.sincronizar")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo usuarios Cointra pueden sincronizar Avansat")
-
     if not settings.avansat_enabled:
         raise HTTPException(status_code=503, detail="Avansat deshabilitado en configuracion")
 
@@ -131,11 +118,8 @@ def sync_cache_avansat_legacy(
 @router.get("/cache-stats", response_model=AvansatCacheStatsOut)
 def avansat_cache_stats(
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.consultar")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede consultar cache de Avansat")
-
     total = db.query(ManifiestoAvansat).count()
     total_con_conciliacion = (
         db.query(ManifiestoAvansat)
@@ -161,11 +145,8 @@ def avansat_cache_list(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=10, le=500),
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(require_permission("avansat.consultar")),
 ):
-    if user.rol != UserRole.COINTRA:
-        raise HTTPException(status_code=403, detail="Solo Cointra puede consultar cache de Avansat")
-
     estado_normalized = (estado or "").strip().upper()
     if estado_normalized and estado_normalized != "SINCRONIZADO":
         return AvansatCacheListOut(total=0, page=page, page_size=page_size, rows=[])
