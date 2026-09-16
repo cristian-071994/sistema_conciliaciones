@@ -28,7 +28,7 @@ def tiene_permiso(db: Session, usuario: Usuario, clave: str) -> bool:
     if usuario.rol_id is None:
         return False
     rol_row = db.query(Rol).filter(Rol.id == usuario.rol_id).first()
-    if not rol_row:
+    if not rol_row or not rol_row.activo:
         return False
     if rol_row.es_superadmin:
         return True
@@ -44,11 +44,13 @@ def tiene_permiso(db: Session, usuario: Usuario, clave: str) -> bool:
 def permisos_de_usuario(db: Session, usuario: Usuario) -> list[str]:
     """Claves de permiso que el frontend puede usar para decidir qué mostrar.
     Un superadmin recibe el catálogo completo (acceso total real); los demás
-    reciben exactamente lo que su rol tiene concedido."""
+    reciben exactamente lo que su rol tiene concedido. Un rol desactivado
+    equivale a no tener ningún permiso (ver roles.py — solo aplica a roles
+    creados manualmente, los 4 base nunca se desactivan)."""
     if usuario.rol_id is None:
         return []
     rol_row = db.query(Rol).filter(Rol.id == usuario.rol_id).first()
-    if not rol_row:
+    if not rol_row or not rol_row.activo:
         return []
     if rol_row.es_superadmin:
         return sorted(clave for (clave,) in db.query(Permiso.clave).all())

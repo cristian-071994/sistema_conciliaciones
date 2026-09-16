@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models.cliente import Cliente
 from app.models.enums import CointraSubRol, UserRole
 from app.models.operacion import Operacion
+from app.models.rol import Rol
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
@@ -32,6 +33,21 @@ def _serialize_user(usuario: Usuario) -> dict:
     payload = UserOut.model_validate(usuario).model_dump()
     payload["operacion_ids"] = sorted({op.id for op in usuario.operaciones_asignadas})
     return payload
+
+
+def _resolve_rol_manual(db: Session, rol_id: int) -> Rol:
+    """Valida un rol_id enviado manualmente al crear/editar un usuario. El
+    rol superadmin (COINTRA_ADMIN) queda excluido a propósito — ese acceso
+    total solo se otorga por la clasificación de negocio fija
+    rol=COINTRA + sub_rol=COINTRA_ADMIN (ver sync_rol_id()), nunca por
+    asignación manual, para no abrir una puerta de escalamiento de
+    privilegios (ej. un Cliente con el perfil de permisos de Cointra Admin)."""
+    rol = db.get(Rol, rol_id)
+    if not rol or not rol.activo:
+        raise HTTPException(status_code=400, detail="Rol de permisos inválido o inactivo")
+    if rol.es_superadmin:
+        raise HTTPException(status_code=400, detail="El rol superadmin no se puede asignar manualmente")
+    return rol
 
 
 def _serialize_operacion(operacion: Operacion) -> dict:
@@ -393,6 +409,13 @@ def update_usuario(
 
     data = payload.model_dump(exclude_unset=True)
     requested_operacion_ids = data.pop("operacion_ids", None)
+    rol_id_provided = "rol_id" in data
+    requested_rol_id = data.pop("rol_id", None)
+    # Capturar ANTES de que la lógica de abajo rellene data["sub_rol"] por
+    # defecto para cualquier usuario COINTRA (ver más abajo) — si no, ese
+    # relleno haría parecer que sub_rol "cambió" en cada edición y
+    # resincronizaría rol_id de más, pisando una asignación manual.
+    business_identity_changed = "rol" in data or "sub_rol" in data
     if "email" in data and data["email"] is not None:
         email = data["email"].strip().lower()
         existing = db.query(Usuario).filter(Usuario.email == email, Usuario.id != usuario_id).first()
@@ -463,7 +486,20 @@ def update_usuario(
     else:
         usuario.operaciones_asignadas = []
 
-    sync_rol_id(db, usuario)
+    if rol_id_provided:
+        if requested_rol_id is None:
+            # Enviar rol_id=null vuelve al comportamiento automático.
+            sync_rol_id(db, usuario)
+        else:
+            usuario.rol_id = _resolve_rol_manual(db, requested_rol_id).id
+    elif business_identity_changed:
+        # Cambió la clasificación de negocio: se resincroniza al rol base
+        # que corresponde, salvo que este mismo request también haya
+        # mandado un rol_id explícito (caso de arriba). Si no se toca
+        # rol/sub_rol, se preserva el rol_id actual tal cual esté (sea
+        # automático o una asignación manual previa) — editar el nombre de
+        # un usuario, por ejemplo, no debe revertir un rol manual.
+        sync_rol_id(db, usuario)
     db.commit()
     db.refresh(usuario)
     return _serialize_user(usuario)
@@ -543,7 +579,10 @@ def create_usuario(
     )
     db.add(usuario)
     db.flush()
-    sync_rol_id(db, usuario)
+    if payload.rol_id is not None:
+        usuario.rol_id = _resolve_rol_manual(db, payload.rol_id).id
+    else:
+        sync_rol_id(db, usuario)
 
     if payload.rol == UserRole.CLIENTE:
         if payload.operacion_ids:

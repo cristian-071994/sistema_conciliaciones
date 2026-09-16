@@ -13,6 +13,9 @@ export interface User {
   operacion_ids?: number[];
   activo: boolean;
   permisos?: string[];
+  // Rol de permisos efectivo (normalmente automático según rol/sub_rol,
+  // pero un admin puede sobreescribirlo manualmente a otro rol creado).
+  rol_id?: number | null;
 }
 
 export type EstadoConexion = "en_linea" | "inactivo" | "no_conectado";
@@ -40,6 +43,7 @@ export interface Rol {
   descripcion: string | null;
   es_superadmin: boolean;
   es_sistema: boolean;
+  activo: boolean;
   permiso_claves: string[];
   usuarios_count: number;
 }

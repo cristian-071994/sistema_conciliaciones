@@ -560,13 +560,12 @@ def _validate_manifiesto_bulk(db: Session, manifiesto: str, placa: str) -> str |
     return None
 
 
-def _get_servicios_viaje_map(db: Session) -> dict[str, Servicio]:
-    """Retorna mapa codigo/nombre -> Servicio para VIAJE y VIAJE_ADICIONAL."""
-    servicios = (
-        db.query(Servicio)
-        .filter(Servicio.codigo.in_(["VIAJE", "VIAJE_ADICIONAL"]), Servicio.activo.is_(True))
-        .all()
-    )
+def _get_servicios_map(db: Session) -> dict[str, Servicio]:
+    """Retorna mapa codigo/nombre -> Servicio para TODOS los servicios activos
+    del catalogo — la carga masiva acepta cualquier tipo de servicio que el
+    usuario haya creado en el modulo Servicios (Hora Extra, Descargue,
+    Estibas, o cualquier otro), no solo Viaje/Viaje Adicional."""
+    servicios = db.query(Servicio).filter(Servicio.activo.is_(True)).all()
     result: dict[str, Servicio] = {}
     for s in servicios:
         result[s.codigo.upper()] = s
@@ -577,11 +576,23 @@ def _get_servicios_viaje_map(db: Session) -> dict[str, Servicio]:
 
 
 @router.get("/plantilla-excel")
-def descargar_plantilla_viajes():
-    """Descarga una plantilla Excel lista para llenar con viajes masivos."""
+def descargar_plantilla_viajes(db: Session = Depends(get_db)):
+    """Descarga una plantilla Excel para carga masiva de servicios. La hoja
+    'Instrucciones' y el desplegable de Tipo Servicio se generan a partir del
+    catálogo real de servicios activos — cualquier servicio que se cree desde
+    el módulo Servicios (Hora Extra, Descargue, Estibas, etc., además de
+    Viaje/Viaje Adicional) aparece automáticamente la próxima vez que se
+    descargue la plantilla, sin tocar este código."""
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    servicios_activos = (
+        db.query(Servicio).filter(Servicio.activo.is_(True)).order_by(Servicio.nombre.asc()).all()
+    )
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "Viajes"
+    ws.title = "Carga de Servicios"
 
     col_labels = [
         "tipo_servicio",
@@ -612,51 +623,105 @@ def descargar_plantilla_viajes():
     header_fill = PatternFill(start_color="1F6B3A", end_color="1F6B3A", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True, size=11)
 
-    from openpyxl.utils import get_column_letter
-
     for col_num, (label, display, width) in enumerate(zip(col_labels, col_display, col_widths), 1):
         cell = ws.cell(row=1, column=col_num, value=display)
         cell.fill = header_fill
         cell.font = header_font
         ws.column_dimensions[get_column_letter(col_num)].width = width
 
-    # Fila de ejemplo
-    examples = [
-        "VIAJE",
-        "Urbano Ruta 1",
-        "2026-05-15",
-        "ABC123",
-        "Ciudad A",
-        "Ciudad B",
-        "Juan Pérez",
-        150000,
-        "Servicio regular",
-        "",
-    ]
-    for col_num, val in enumerate(examples, 1):
-        ws.cell(row=2, column=col_num, value=val)
+    # Fila(s) de ejemplo — una por cada servicio activo (hasta un máximo
+    # razonable) para que quede claro qué valores va en cada tipo, en
+    # particular cuándo origen/destino aplica y cuándo no.
+    filas_ejemplo = []
+    for servicio in servicios_activos[:6]:
+        filas_ejemplo.append(
+            [
+                servicio.codigo,
+                f"Ejemplo {servicio.nombre}",
+                "2026-05-15",
+                "ABC123",
+                "Ciudad A" if servicio.requiere_origen_destino else "",
+                "Ciudad B" if servicio.requiere_origen_destino else "",
+                "Juan Pérez",
+                150000,
+                "",
+                "",
+            ]
+        )
+    if not filas_ejemplo:
+        filas_ejemplo.append(["VIAJE", "Urbano Ruta 1", "2026-05-15", "ABC123", "Ciudad A", "Ciudad B", "Juan Pérez", 150000, "", ""])
+
+    for row_num, fila in enumerate(filas_ejemplo, start=2):
+        for col_num, val in enumerate(fila, 1):
+            ws.cell(row=row_num, column=col_num, value=val)
+
+    # Desplegable de Tipo Servicio contra el catálogo real (evita typos que
+    # tumben la fila al cargar) — se alimenta de una hoja de referencia
+    # oculta en vez de una lista inline por si hay muchos servicios/nombres largos.
+    if servicios_activos:
+        ws_ref = wb.create_sheet("_ServiciosValidos")
+        for i, servicio in enumerate(servicios_activos, start=1):
+            ws_ref.cell(row=i, column=1, value=servicio.codigo)
+        ws_ref.sheet_state = "hidden"
+
+        dv = DataValidation(
+            type="list",
+            formula1=f"_ServiciosValidos!$A$1:$A${len(servicios_activos)}",
+            allow_blank=True,
+            showErrorMessage=True,
+        )
+        dv.error = "Selecciona un Tipo Servicio de la lista — revisa la hoja 'Instrucciones' para ver el catálogo completo."
+        dv.errorTitle = "Tipo de servicio inválido"
+        ws.add_data_validation(dv)
+        dv.add(f"A2:A1000")
 
     # Instrucciones en hoja separada
     ws_info = wb.create_sheet("Instrucciones")
-    ws_info["A1"] = "INSTRUCCIONES PARA CARGA MASIVA DE VIAJES"
+    ws_info["A1"] = "INSTRUCCIONES PARA CARGA MASIVA DE SERVICIOS"
     ws_info["A1"].font = Font(bold=True, size=13)
     instrucciones = [
         "",
-        "1. En la hoja 'Viajes' complete una fila por cada servicio a cargar.",
+        "1. En la hoja 'Carga de Servicios' complete una fila por cada servicio a cargar.",
         "2. La operación se selecciona en el sistema al momento de subir el archivo.",
-        "3. Tipo Servicio: use exactamente 'VIAJE' o 'VIAJE_ADICIONAL'.",
+        "3. Tipo Servicio: use exactamente el código de la tabla de abajo (columna A tiene un desplegable con los valores válidos).",
         "4. Fecha: formato YYYY-MM-DD (ej: 2026-05-15).",
         "5. Placa: solo la placa del vehículo (ej: ABC123).",
-        "6. Tarifa Tercero: número sin puntos ni comas (ej: 150000).",
-        "7. Origen y Destino son obligatorios para tipo VIAJE y VIAJE_ADICIONAL.",
+        "6. Tarifa Tercero: número sin puntos ni comas (ej: 150000) — siempre obligatoria; el sistema calcula la tarifa cliente según la rentabilidad de la operación.",
+        "7. Origen y Destino: obligatorios solo para los tipos de servicio marcados 'Sí' en la columna 'Requiere origen/destino' de la tabla de abajo.",
         "8. Conductor y Descripción son opcionales.",
-        "9. No modifique los encabezados de la fila 1.",
-        "10. Elimine la fila de ejemplo (fila 2) antes de cargar.",
+        "9. No modifique los encabezados de la fila 1 ni el nombre de la hoja.",
+        "10. Borre las filas de ejemplo antes de cargar el archivo real.",
         "11. Manifiesto: opcional. Si se indica, debe existir en Avansat y la placa debe coincidir.",
+        "",
+        "TIPOS DE SERVICIO DISPONIBLES ACTUALMENTE EN EL SISTEMA",
+        "(esta tabla se genera automáticamente desde el módulo Servicios — si creas un servicio nuevo ahí, aparecerá aquí la próxima vez que descargues esta plantilla)",
+        "",
     ]
     for i, linea in enumerate(instrucciones, 2):
         ws_info[f"A{i}"] = linea
-    ws_info.column_dimensions["A"].width = 70
+    ws_info.column_dimensions["A"].width = 34
+    ws_info.column_dimensions["B"].width = 40
+    ws_info.column_dimensions["C"].width = 26
+
+    tabla_header_row = 2 + len(instrucciones)
+    tabla_headers = ["Código (Tipo Servicio)", "Nombre", "Requiere origen/destino"]
+    for col_num, texto in enumerate(tabla_headers, 1):
+        cell = ws_info.cell(row=tabla_header_row, column=col_num, value=texto)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    if servicios_activos:
+        for i, servicio in enumerate(servicios_activos, start=1):
+            row = tabla_header_row + i
+            ws_info.cell(row=row, column=1, value=servicio.codigo)
+            ws_info.cell(row=row, column=2, value=servicio.nombre)
+            ws_info.cell(row=row, column=3, value="Sí" if servicio.requiere_origen_destino else "No")
+    else:
+        ws_info.cell(
+            row=tabla_header_row + 1,
+            column=1,
+            value="No hay servicios activos configurados todavía — créalos en el módulo Servicios antes de usar la carga masiva.",
+        )
 
     output = BytesIO()
     wb.save(output)
@@ -665,7 +730,7 @@ def descargar_plantilla_viajes():
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=plantilla_viajes.xlsx"},
+        headers={"Content-Disposition": "attachment; filename=plantilla_carga_servicios.xlsx"},
     )
 
 
@@ -706,7 +771,7 @@ async def preview_carga_masiva_viajes(
     normalized = [_normalize_excel_header(h) for h in raw_headers]
     idx = {name: i for i, name in enumerate(normalized) if name}
 
-    servicios_map = _get_servicios_viaje_map(db)
+    servicios_map = _get_servicios_map(db)
     seen_manifiestos: set[str] = set()  # control de duplicados en el mismo archivo
 
     def get_cell(row: tuple, key: str) -> str | None:
@@ -760,13 +825,13 @@ async def preview_carga_masiva_viajes(
         servicio: Servicio | None = None
 
         if not tipo_servicio_raw:
-            error = "Tipo Servicio es obligatorio. Use: VIAJE o VIAJE_ADICIONAL"
+            error = "Tipo Servicio es obligatorio. Revisa la hoja 'Instrucciones' de la plantilla para ver los tipos disponibles."
             valido = False
         else:
             lookup = tipo_servicio_raw.strip().upper().replace(" ", "_")
             servicio = servicios_map.get(lookup) or servicios_map.get(tipo_servicio_raw.strip().upper())
             if not servicio:
-                error = f"Tipo Servicio '{tipo_servicio_raw}' no reconocido. Use: VIAJE o VIAJE_ADICIONAL"
+                error = f"Tipo Servicio '{tipo_servicio_raw}' no reconocido. Revisa la hoja 'Instrucciones' de la plantilla para ver los tipos disponibles."
                 valido = False
 
         if valido and not titulo:
@@ -872,7 +937,7 @@ async def bulk_upload_viajes(
     normalized = [_normalize_excel_header(h) for h in raw_headers]
     idx = {name: i for i, name in enumerate(normalized) if name}
 
-    servicios_map = _get_servicios_viaje_map(db)
+    servicios_map = _get_servicios_map(db)
     seen_manifiestos_upload: set[str] = set()  # control de duplicados en el mismo archivo
 
     def get_cell(row: tuple, key: str) -> str | None:
@@ -923,13 +988,19 @@ async def bulk_upload_viajes(
             if tarifa_num <= 0:
                 raise ValueError("Tarifa Tercero debe ser mayor a 0")
 
-            # Resolver servicio
-            servicio: Servicio | None = None
-            if tipo_servicio_raw:
-                lookup = tipo_servicio_raw.strip().upper().replace(" ", "_")
-                servicio = servicios_map.get(lookup) or servicios_map.get(tipo_servicio_raw.strip().upper())
+            # Resolver servicio — igual de estricto que la validacion previa
+            # (preview_carga_masiva_viajes), para no cargar filas con un tipo
+            # de servicio mal escrito como si fueran un viaje generico.
+            if not tipo_servicio_raw:
+                raise ValueError("Tipo Servicio es obligatorio. Revisa la hoja 'Instrucciones' de la plantilla.")
+            lookup = tipo_servicio_raw.strip().upper().replace(" ", "_")
+            servicio = servicios_map.get(lookup) or servicios_map.get(tipo_servicio_raw.strip().upper())
+            if not servicio:
+                raise ValueError(
+                    f"Tipo Servicio '{tipo_servicio_raw}' no reconocido. Revisa la hoja 'Instrucciones' de la plantilla."
+                )
 
-            if servicio and servicio.requiere_origen_destino:
+            if servicio.requiere_origen_destino:
                 if not origen:
                     raise ValueError("Origen es obligatorio para este tipo de servicio")
                 if not destino:

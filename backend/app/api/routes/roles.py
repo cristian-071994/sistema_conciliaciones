@@ -7,7 +7,7 @@ from app.db.session import get_db
 from app.models.permiso import Permiso
 from app.models.rol import Rol
 from app.models.usuario import Usuario
-from app.schemas.rol import PermisoOut, RolOut, RolPermisosUpdate
+from app.schemas.rol import PermisoOut, RolCreate, RolOut, RolPermisosUpdate, RolUpdate
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 
@@ -19,9 +19,14 @@ def _serialize_rol(rol: Rol, usuarios_count: int) -> RolOut:
         descripcion=rol.descripcion,
         es_superadmin=rol.es_superadmin,
         es_sistema=rol.es_sistema,
+        activo=rol.activo,
         permiso_claves=sorted(p.clave for p in rol.permisos),
         usuarios_count=usuarios_count,
     )
+
+
+def _usuarios_count(db: Session, rol_id: int) -> int:
+    return db.query(func.count(Usuario.id)).filter(Usuario.rol_id == rol_id).scalar() or 0
 
 
 @router.get("", response_model=list[RolOut])
@@ -69,5 +74,96 @@ def update_rol_permisos(
     db.commit()
     db.refresh(rol)
 
-    usuarios_count = db.query(func.count(Usuario.id)).filter(Usuario.rol_id == rol.id).scalar() or 0
-    return _serialize_rol(rol, usuarios_count)
+    return _serialize_rol(rol, _usuarios_count(db, rol.id))
+
+
+@router.post("", response_model=RolOut)
+def create_rol(
+    payload: RolCreate,
+    db: Session = Depends(get_db),
+    _user: Usuario = Depends(require_permission("roles.crear")),
+):
+    nombre = payload.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre del rol es obligatorio")
+    if db.query(Rol).filter(func.upper(Rol.nombre) == nombre.upper()).first():
+        raise HTTPException(status_code=400, detail="Ya existe un rol con ese nombre")
+
+    rol = Rol(
+        nombre=nombre,
+        descripcion=(payload.descripcion or "").strip() or None,
+        es_superadmin=False,
+        es_sistema=False,
+        activo=True,
+    )
+    db.add(rol)
+    db.commit()
+    db.refresh(rol)
+    return _serialize_rol(rol, 0)
+
+
+@router.patch("/{rol_id}", response_model=RolOut)
+def update_rol(
+    rol_id: int,
+    payload: RolUpdate,
+    db: Session = Depends(get_db),
+    _user: Usuario = Depends(require_permission("roles.editar")),
+):
+    rol = db.get(Rol, rol_id)
+    if not rol:
+        raise HTTPException(status_code=404, detail="Rol no encontrado")
+    if rol.es_sistema:
+        raise HTTPException(
+            status_code=400,
+            detail="Los roles base del sistema no se pueden renombrar — su nombre define la clasificación de negocio de los usuarios.",
+        )
+
+    data = payload.model_dump(exclude_unset=True)
+    if "nombre" in data and data["nombre"] is not None:
+        nombre = data["nombre"].strip()
+        if not nombre:
+            raise HTTPException(status_code=400, detail="El nombre del rol es obligatorio")
+        existente = db.query(Rol).filter(func.upper(Rol.nombre) == nombre.upper(), Rol.id != rol_id).first()
+        if existente:
+            raise HTTPException(status_code=400, detail="Ya existe un rol con ese nombre")
+        rol.nombre = nombre
+    if "descripcion" in data:
+        rol.descripcion = (data["descripcion"] or "").strip() or None
+
+    db.commit()
+    db.refresh(rol)
+    return _serialize_rol(rol, _usuarios_count(db, rol.id))
+
+
+@router.post("/{rol_id}/desactivar", response_model=RolOut)
+def desactivar_rol(
+    rol_id: int,
+    db: Session = Depends(get_db),
+    _user: Usuario = Depends(require_permission("roles.desactivar")),
+):
+    rol = db.get(Rol, rol_id)
+    if not rol:
+        raise HTTPException(status_code=404, detail="Rol no encontrado")
+    if rol.es_sistema:
+        raise HTTPException(status_code=400, detail="Los roles base del sistema no se pueden desactivar")
+
+    rol.activo = False
+    db.commit()
+    db.refresh(rol)
+    return _serialize_rol(rol, _usuarios_count(db, rol.id))
+
+
+@router.post("/{rol_id}/activar", response_model=RolOut)
+def activar_rol(
+    rol_id: int,
+    db: Session = Depends(get_db),
+    _user: Usuario = Depends(require_permission("roles.desactivar")),
+):
+    rol = db.get(Rol, rol_id)
+    if not rol:
+        raise HTTPException(status_code=404, detail="Rol no encontrado")
+
+    rol.activo = True
+    db.commit()
+    db.refresh(rol)
+    return _serialize_rol(rol, _usuarios_count(db, rol.id))

@@ -87,6 +87,7 @@ export const api = {
     cliente_id?: number | null;
     tercero_id?: number | null;
     operacion_ids?: number[];
+    rol_id?: number | null;
   }) =>
     request<User>("/catalogs/usuarios", {
       method: "POST",
@@ -522,6 +523,7 @@ export const api = {
       cliente_id?: number | null;
       tercero_id?: number | null;
       operacion_ids?: number[];
+      rol_id?: number | null;
     }
   ) =>
     request<User>(`/catalogs/usuarios/${id}`, {
@@ -706,6 +708,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ permiso_claves: permisoClaves }),
     }),
+  crearRol: (payload: { nombre: string; descripcion?: string }) =>
+    request<Rol>("/roles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  editarRol: (rolId: number, payload: { nombre?: string; descripcion?: string }) =>
+    request<Rol>(`/roles/${rolId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  desactivarRol: (rolId: number) =>
+    request<Rol>(`/roles/${rolId}/desactivar`, { method: "POST" }),
+  activarRol: (rolId: number) =>
+    request<Rol>(`/roles/${rolId}/activar`, { method: "POST" }),
   presenceHeartbeat: () =>
     request<void>("/presence/heartbeat", { method: "POST" }, { skipUnauthorizedHandler: true }),
   presenceLogout: () =>

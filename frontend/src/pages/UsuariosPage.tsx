@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ActionModal } from "../components/common/ActionModal";
 import { UserStatusIndicator } from "../components/common/UserStatusIndicator";
 import { api } from "../services/api";
-import type { Cliente, EstadoConexion, Operacion, Tercero, User, UsuarioPresence } from "../types";
+import type { Cliente, EstadoConexion, Operacion, Rol, Tercero, User, UsuarioPresence } from "../types";
 import { hasPermiso } from "../utils/permisos";
 
 interface Props {
@@ -11,22 +11,26 @@ interface Props {
 }
 
 const INTERVALO_REFRESCO_PRESENCIA_MS = 30_000;
+const ROL_AUTOMATICO = "auto";
 
 export function UsuariosPage({ user }: Props) {
   const puedeVer = hasPermiso(user, "usuarios.ver");
   const puedeCrear = hasPermiso(user, "usuarios.crear");
   const puedeEditar = hasPermiso(user, "usuarios.editar");
   const puedeDesactivar = hasPermiso(user, "usuarios.desactivar");
+  const puedeVerRoles = hasPermiso(user, "roles.ver");
   const [usuarios, setUsuarios] = useState<User[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [terceros, setTerceros] = useState<Tercero[]>([]);
   const [operaciones, setOperaciones] = useState<Operacion[]>([]);
+  const [roles, setRoles] = useState<Rol[]>([]);
   const [presencia, setPresencia] = useState<Map<number, UsuarioPresence>>(new Map());
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [rolSeleccionado, setRolSeleccionado] = useState<User["rol"]>("CLIENTE");
   const [createClienteId, setCreateClienteId] = useState<number | null>(null);
   const [createOperacionIds, setCreateOperacionIds] = useState<number[]>([]);
+  const [createRolId, setCreateRolId] = useState<string>(ROL_AUTOMATICO);
   const [showPassword, setShowPassword] = useState(false);
   const [editModal, setEditModal] = useState<{
     id: number;
@@ -35,6 +39,7 @@ export function UsuariosPage({ user }: Props) {
     rol: User["rol"];
     cliente_id?: number | null;
     operacion_ids: number[];
+    rol_id: string;
   } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ id: number; action: "inactivar" | "reactivar" } | null>(null);
   const clientesActivos = useMemo(() => clientes.filter((c) => c.activo), [clientes]);
@@ -42,6 +47,10 @@ export function UsuariosPage({ user }: Props) {
 
   const clienteById = useMemo(() => new Map(clientes.map((c) => [c.id, c])), [clientes]);
   const terceroById = useMemo(() => new Map(terceros.map((t) => [t.id, t])), [terceros]);
+  const rolById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
+  // El rol superadmin nunca se asigna manualmente — solo por la clasificación
+  // fija COINTRA + COINTRA_ADMIN (ver backend _resolve_rol_manual).
+  const rolesAsignables = useMemo(() => roles.filter((r) => r.activo && !r.es_superadmin), [roles]);
   const operacionesByCliente = useMemo(() => {
     const grouped = new Map<number, Operacion[]>();
     for (const op of operaciones) {
@@ -54,11 +63,18 @@ export function UsuariosPage({ user }: Props) {
 
   async function loadData() {
     try {
-      const [us, cs, ts, ops] = await Promise.all([api.usuarios(), api.clientes(), api.terceros(), api.operaciones()]);
+      const [us, cs, ts, ops, rolesData] = await Promise.all([
+        api.usuarios(),
+        api.clientes(),
+        api.terceros(),
+        api.operaciones(),
+        puedeVerRoles ? api.roles() : Promise.resolve([]),
+      ]);
       setUsuarios(us);
       setClientes(cs);
       setTerceros(ts);
       setOperaciones(ops);
+      setRoles(rolesData);
       setError("");
     } catch (e) {
       setError((e as Error).message || "No se pudo cargar usuarios");
@@ -114,11 +130,13 @@ export function UsuariosPage({ user }: Props) {
         cliente_id: rol === "CLIENTE" ? Number(form.get("cliente_id")) : null,
         tercero_id: rol === "TERCERO" ? Number(form.get("tercero_id")) : null,
         operacion_ids: rol === "CLIENTE" ? createOperacionIds : [],
+        rol_id: createRolId === ROL_AUTOMATICO ? undefined : Number(createRolId),
       });
       formEl.reset();
       setRolSeleccionado("CLIENTE");
       setCreateClienteId(null);
       setCreateOperacionIds([]);
+      setCreateRolId(ROL_AUTOMATICO);
       setShowPassword(false);
       await loadData();
       setSuccess("Usuario creado exitosamente.");
@@ -137,6 +155,7 @@ export function UsuariosPage({ user }: Props) {
         nombre: editModal.nombre.trim(),
         email: editModal.email.trim(),
         operacion_ids: editModal.rol === "CLIENTE" ? editModal.operacion_ids : undefined,
+        rol_id: editModal.rol_id === ROL_AUTOMATICO ? null : Number(editModal.rol_id),
       });
       await loadData();
       setSuccess("Usuario actualizado exitosamente.");
@@ -240,6 +259,27 @@ export function UsuariosPage({ user }: Props) {
                 <option value="COINTRA">COINTRA</option>
               </select>
             </div>
+
+            {puedeVerRoles && rolesAsignables.length > 0 && (
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
+                  Rol de permisos (opcional)
+                </label>
+                <select
+                  value={createRolId}
+                  onChange={(e) => setCreateRolId(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+                >
+                  <option value={ROL_AUTOMATICO}>Automático (según rol de negocio)</option>
+                  {rolesAsignables.map((r) => (
+                    <option key={r.id} value={r.id}>{r.nombre}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-neutral">
+                  Deja "Automático" salvo que quieras darle un perfil de permisos distinto al estándar de su rol.
+                </p>
+              </div>
+            )}
 
             {rolSeleccionado === "COINTRA" && (
               <div className="md:col-span-2">
@@ -368,7 +408,8 @@ export function UsuariosPage({ user }: Props) {
                           {puedeEditar && (
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={() => {
+                                const rolActual = u.rol_id != null ? rolById.get(u.rol_id) : undefined;
                                 setEditModal({
                                   id: u.id,
                                   nombre: u.nombre,
@@ -376,8 +417,9 @@ export function UsuariosPage({ user }: Props) {
                                   rol: u.rol,
                                   cliente_id: u.cliente_id,
                                   operacion_ids: u.operacion_ids ?? [],
-                                })
-                              }
+                                  rol_id: rolActual && !rolActual.es_superadmin ? String(rolActual.id) : ROL_AUTOMATICO,
+                                });
+                              }}
                               className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                             >
                               Editar
@@ -456,6 +498,23 @@ export function UsuariosPage({ user }: Props) {
               Puedes seleccionar múltiples operaciones para este usuario cliente.
             </p>
           </>
+        )}
+        {puedeVerRoles && rolesAsignables.length > 0 && editModal && (
+          <div>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral">Rol de permisos</p>
+            <select
+              value={editModal.rol_id}
+              onChange={(e) =>
+                setEditModal((prev) => (prev ? { ...prev, rol_id: e.target.value } : prev))
+              }
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value={ROL_AUTOMATICO}>Automático (según rol de negocio)</option>
+              {rolesAsignables.map((r) => (
+                <option key={r.id} value={r.id}>{r.nombre}</option>
+              ))}
+            </select>
+          </div>
         )}
       </ActionModal>
 

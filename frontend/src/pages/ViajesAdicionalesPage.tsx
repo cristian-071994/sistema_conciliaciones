@@ -38,8 +38,12 @@ const ESTADO_GESTION_BADGE: Record<SolicitudViajeAdicional["estado_gestion"], st
 function verManifiesto(id: number) {
   // Se abre la pestaña de forma SÍNCRONA dentro del gesto de clic (no en el
   // .then()) porque los navegadores bloquean popups abiertos después de un
-  // await/fetch asíncrono, aunque el usuario sí haya hecho clic.
-  const ventana = window.open("", "_blank", "noopener,noreferrer");
+  // await/fetch asíncrono, aunque el usuario sí haya hecho clic. Importante:
+  // SIN "noopener"/"noreferrer" aquí — cualquiera de las dos hace que
+  // window.open() devuelva null (aunque la pestaña sí se abra), lo que
+  // rompía el "if (ventana)" de abajo y terminaba abriendo una SEGUNDA
+  // pestaña con el PDF, dejando la primera en about:blank huérfana.
+  const ventana = window.open("", "_blank");
   void api
     .verManifiestoViajeAdicional(id)
     .then((blob) => {

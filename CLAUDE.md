@@ -125,12 +125,14 @@ Esta clasificación de negocio (rol + sub_rol) es fija y no se edita desde el pa
 
 Además de la identidad de negocio fija de arriba, existe un segundo nivel de permisos **sí editable** desde `/roles` (solo visible con el permiso `roles.ver`/`roles.gestionar`), que gobierna el CRUD de catálogos administrativos: Usuarios, Roles, Presencia, Operaciones, Clientes, Terceros, Vehículos/Tipos de vehículo, Servicios, Catálogo de Tarifas, Viajes y Consulta Avansat.
 
-- **Modelos:** `Rol` / `Permiso` (many-to-many vía `rol_permisos`), `Usuario.rol_id` (se resincroniza automáticamente con `sync_rol_id()` cada vez que cambian `rol`/`sub_rol`).
+- **Modelos:** `Rol` / `Permiso` (many-to-many vía `rol_permisos`), `Usuario.rol_id` (se resincroniza automáticamente con `sync_rol_id()` cada vez que cambian `rol`/`sub_rol`, salvo que se haya asignado manualmente — ver abajo).
 - **Catálogo canónico:** `backend/app/core/permisos_catalog.py` — lista de permisos, roles base y sus permisos por defecto (`PERMISOS_POR_ROL_DEFECTO`). Agregar un permiso nuevo aquí no requiere migración — `seed_data()` lo inserta de forma idempotente en cada arranque, y hace *backfill* automático a roles existentes si el permiso es nuevo.
-- **Servicio:** `backend/app/services/permisos_service.py` — `tiene_permiso(db, usuario, clave)` y `permisos_de_usuario(db, usuario)` (esta última alimenta `permisos: string[]` en `/auth/me`, que el frontend usa para decidir qué mostrar).
+- **Servicio:** `backend/app/services/permisos_service.py` — `tiene_permiso(db, usuario, clave)` y `permisos_de_usuario(db, usuario)` (esta última alimenta `permisos: string[]` en `/auth/me`, que el frontend usa para decidir qué mostrar). Un rol con `activo=False` equivale a no tener permisos.
 - **Dependency FastAPI:** `require_permission(clave)` en `app/api/deps.py` — usar en vez de chequeos de rol embebidos para cualquier acción administrativa nueva.
 - **Frontend:** `frontend/src/utils/permisos.ts` (`hasPermiso`/`hasAlgunPermiso`); `Sidebar.tsx` y las rutas gateadas en `App.tsx` (`RequirePermiso`) muestran/bloquean módulos según el permiso real del usuario, no según su rol — así un Cliente al que se le concede un permiso puntual (ej. `catalogo_tarifas.ver`) ve exactamente ese módulo.
 - **Regla que NO se toca aquí:** un permiso administrativo nunca cambia la visibilidad financiera fija (tabla de arriba). Ej.: aunque se le conceda `catalogo_tarifas.crear` a un Cliente, `rentabilidad_pct`/`tarifa_tercero` siguen ocultos para él en la respuesta del backend — ver `_to_out()` en `backend/app/api/routes/tarifas.py`.
+
+**Roles adicionales (más allá de los 4 base):** un `COINTRA_ADMIN` puede crear roles nuevos desde el panel (`roles.crear`), editar su nombre/descripción (`roles.editar`, bloqueado para los 4 roles `es_sistema`) y desactivarlos/reactivarlos (`roles.desactivar`, también bloqueado para `es_sistema`) — no hay "eliminar", es el mismo patrón de soft-delete (`activo`) que el resto del sistema. Un rol nuevo es solo un perfil de permisos adicional — **no** crea una nueva clasificación de negocio: para que un usuario lo use, un admin se lo asigna manualmente desde Usuarios (`UserCreate`/`UserUpdate.rol_id`), lo que sobreescribe la asignación automática de `sync_rol_id()`. Ese `rol_id` manual persiste en ediciones posteriores que no toquen `rol`/`sub_rol`; si el `rol`/`sub_rol` del usuario cambia sin mandar `rol_id` explícito, vuelve a resincronizarse al rol base por defecto. El rol superadmin (`COINTRA_ADMIN`) nunca es asignable manualmente (`_resolve_rol_manual()` en `catalogs.py` lo rechaza) — evita que cualquier otro rol de negocio obtenga acceso total por esta vía.
 
 ---
 
@@ -230,14 +232,14 @@ Implementada en `backend/app/services/pricing.py`.
 PostgreSQL 16. Soft deletes via campo `activo`. IDs `int autoincrement`, timestamps `created_at`/`updated_at`.
 
 **Catálogos:**
-- `usuarios`: email, hashed_password, rol, sub_rol, `rol_id` (FK a `roles`, resincronizada por `sync_rol_id()`), token_version (invalida JWTs en logout)
+- `usuarios`: email, hashed_password, rol, sub_rol, `rol_id` (FK a `roles`; automática vía `sync_rol_id()` o manual si un admin la sobreescribe explícitamente), token_version (invalida JWTs en logout)
 - `clientes`, `terceros`: entidades vinculadas a usuarios
 - `operaciones`: vincula cliente + tercero + % rentabilidad + descuento opcional
 - `vehiculos`, `tipos_vehiculo`: placa/tipo vinculados a tercero
 - `servicios`: catálogo de servicios con código auto-generado desde el nombre completo normalizado
 
 **Roles y permisos (panel administrativo configurable):**
-- `roles`: los 4 roles base sembrados (`COINTRA_ADMIN` con `es_superadmin=True`, `COINTRA_USER`, `CLIENTE`, `TERCERO`) — no hay roles "custom"
+- `roles`: los 4 roles base sembrados con `es_sistema=True` (`COINTRA_ADMIN` con `es_superadmin=True`, `COINTRA_USER`, `CLIENTE`, `TERCERO`, nunca renombrables/desactivables) más cualquier rol adicional creado desde el panel (`es_sistema=False`, editable y desactivable vía `activo`) — estos son perfiles de permisos, no nuevas clasificaciones de negocio (ver "Roles adicionales" arriba)
 - `permisos`: catálogo de claves (`operaciones.crear`, `catalogo_tarifas.editar`, etc.) — ver `permisos_catalog.py`
 - `rol_permisos`: tabla intermedia many-to-many entre `roles` y `permisos`
 

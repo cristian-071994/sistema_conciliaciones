@@ -984,8 +984,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
   function verPdfViajeAdicional(solicitudId: number) {
     // Ver window.open síncrono: ver comentario equivalente en
     // ViajesAdicionalesPage.tsx (verManifiesto) — evita que el navegador
-    // bloquee el popup por abrirse después de un await.
-    const ventana = window.open("", "_blank", "noopener,noreferrer");
+    // bloquee el popup por abrirse después de un await. Importante: SIN
+    // "noopener"/"noreferrer" aquí — cualquiera de las dos hace que
+    // window.open() devuelva null (aunque la pestaña sí se abra), lo que
+    // rompía el "if (ventana)" de abajo y terminaba abriendo una SEGUNDA
+    // pestaña con el PDF, dejando la primera en about:blank huérfana.
+    const ventana = window.open("", "_blank");
     void api
       .verManifiestoViajeAdicional(solicitudId)
       .then((blob) => {
@@ -2469,7 +2473,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               <div className="mt-5 border-t border-border pt-5">
                 <h3 className="mb-2 text-sm font-semibold text-slate-900">Carga masiva desde Excel</h3>
                 <p className="mb-3 text-xs text-neutral">
-                  Carga múltiples viajes/adicionales a la vez usando un archivo Excel. Primero selecciona la operación, luego el archivo.
+                  Carga múltiples servicios a la vez (viajes, horas extra, descargue, estibas o cualquier otro tipo de servicio activo) usando un archivo Excel. Descarga la plantilla — trae una hoja "Instrucciones" con el catálogo de tipos de servicio disponible — primero selecciona la operación, luego el archivo.
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -2480,7 +2484,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = "plantilla_viajes.xlsx";
+                        a.download = "plantilla_carga_servicios.xlsx";
                         a.click();
                         URL.revokeObjectURL(url);
                       } catch (err) {

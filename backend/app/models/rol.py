@@ -17,6 +17,10 @@ class Rol(Base):
     # depende de que estos 4 roles base siempre existan). Sus permisos sí
     # son editables, salvo en es_superadmin donde no aplica.
     es_sistema: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Soft-delete: un rol creado manualmente se puede desactivar sin
+    # eliminarlo (preserva el historial de qué usuarios lo tuvieron). Los
+    # roles es_sistema nunca se desactivan — ver api/routes/roles.py.
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     permisos = relationship("Permiso", secondary="rol_permisos", back_populates="roles")
