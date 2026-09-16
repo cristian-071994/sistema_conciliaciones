@@ -45,14 +45,23 @@ export function VehiculosPage({ user }: Props) {
     | { type: "inactivarTipo" | "reactivarTipo"; id: number }
     | null
   >(null);
+  const [editVehiculoModal, setEditVehiculoModal] = useState<{
+    id: number;
+    placa: string;
+    tipo_vehiculo_id: string;
+    tercero_id: string;
+  } | null>(null);
+  const [editTipoModal, setEditTipoModal] = useState<{ id: number; nombre: string } | null>(null);
 
   // Un Tercero siempre puede registrar sus propios vehiculos y proponer tipos
   // (regla de negocio fija); un Cointra necesita el permiso correspondiente.
   const puedeCrearVehiculo = user.rol === "TERCERO" || hasPermiso(user, "vehiculos.crear");
+  const puedeEditarVehiculo = hasPermiso(user, "vehiculos.editar");
   const puedeDesactivarVehiculo = hasPermiso(user, "vehiculos.desactivar");
   const puedeCrearTipo = user.rol === "TERCERO" || hasPermiso(user, "tipos_vehiculo.crear");
+  const puedeEditarTipo = hasPermiso(user, "tipos_vehiculo.editar");
   const puedeDesactivarTipo = hasPermiso(user, "tipos_vehiculo.desactivar");
-  const mostrarSeccionTipos = puedeCrearTipo || puedeDesactivarTipo;
+  const mostrarSeccionTipos = puedeCrearTipo || puedeEditarTipo || puedeDesactivarTipo;
   const tiposActivos = useMemo(() => tipos.filter((t) => t.activo), [tipos]);
   const tercerosDisponibles = useMemo(() => {
     if (user.rol === "TERCERO" && user.tercero_id) {
@@ -115,6 +124,39 @@ export function VehiculosPage({ user }: Props) {
     try {
       await api.crearTipoVehiculo({ nombre });
       setTipoNombre("");
+      await loadData();
+    } catch (err) {
+      setError(toSpanishError(err));
+    }
+  }
+
+  async function handleEditVehiculo() {
+    if (!editVehiculoModal) return;
+    setError("");
+    const placa = editVehiculoModal.placa.trim().toUpperCase();
+    const tipo_vehiculo_id = Number(editVehiculoModal.tipo_vehiculo_id);
+    const tercero_id = Number(editVehiculoModal.tercero_id);
+    if (!placa || !tipo_vehiculo_id || !tercero_id) {
+      setError("Debes diligenciar placa, tipo de vehiculo y tercero propietario");
+      return;
+    }
+    try {
+      await api.editarVehiculo(editVehiculoModal.id, { placa, tipo_vehiculo_id, tercero_id });
+      setEditVehiculoModal(null);
+      await loadData();
+    } catch (err) {
+      setError(toSpanishError(err));
+    }
+  }
+
+  async function handleEditTipo() {
+    if (!editTipoModal) return;
+    setError("");
+    const nombre = editTipoModal.nombre.trim();
+    if (!nombre) return;
+    try {
+      await api.editarTipoVehiculo(editTipoModal.id, { nombre });
+      setEditTipoModal(null);
       await loadData();
     } catch (err) {
       setError(toSpanishError(err));
@@ -290,7 +332,7 @@ export function VehiculosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Tipo</th>
                   <th className="border-b border-border px-3 py-2 text-left">Propietario</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  {puedeDesactivarVehiculo && (
+                  {(puedeEditarVehiculo || puedeDesactivarVehiculo) && (
                     <th className="border-b border-border px-3 py-2 text-left">Acción</th>
                   )}
                 </tr>
@@ -306,24 +348,44 @@ export function VehiculosPage({ user }: Props) {
                         {v.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    {puedeDesactivarVehiculo && (
+                    {(puedeEditarVehiculo || puedeDesactivarVehiculo) && (
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmModal({
-                              type: v.activo ? "inactivarVehiculo" : "reactivarVehiculo",
-                              id: v.id,
-                            })
-                          }
-                          className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
-                            v.activo
-                              ? "border-border bg-white text-slate-700 hover:bg-slate-50"
-                              : "border-success/40 bg-success/10 text-success hover:bg-success/20"
-                          }`}
-                        >
-                          {v.activo ? "Inactivar" : "Reactivar"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {puedeEditarVehiculo && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditVehiculoModal({
+                                  id: v.id,
+                                  placa: v.placa,
+                                  tipo_vehiculo_id: String(v.tipo_vehiculo_id),
+                                  tercero_id: v.tercero_id ? String(v.tercero_id) : "",
+                                })
+                              }
+                              className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivarVehiculo && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmModal({
+                                  type: v.activo ? "inactivarVehiculo" : "reactivarVehiculo",
+                                  id: v.id,
+                                })
+                              }
+                              className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                                v.activo
+                                  ? "border-border bg-white text-slate-700 hover:bg-slate-50"
+                                  : "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                              }`}
+                            >
+                              {v.activo ? "Inactivar" : "Reactivar"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -372,7 +434,7 @@ export function VehiculosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">ID</th>
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  {puedeDesactivarTipo && <th className="border-b border-border px-3 py-2 text-left">Acción</th>}
+                  {(puedeEditarTipo || puedeDesactivarTipo) && <th className="border-b border-border px-3 py-2 text-left">Acción</th>}
                 </tr>
               </thead>
               <tbody>
@@ -389,24 +451,37 @@ export function VehiculosPage({ user }: Props) {
                         {t.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    {puedeDesactivarTipo && (
+                    {(puedeEditarTipo || puedeDesactivarTipo) && (
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmModal({
-                              type: t.activo ? "inactivarTipo" : "reactivarTipo",
-                              id: t.id,
-                            })
-                          }
-                          className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
-                            t.activo
-                              ? "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
-                              : "border-success/40 bg-success/10 text-success hover:bg-success/20"
-                          }`}
-                        >
-                          {t.activo ? "Inactivar" : "Reactivar"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {puedeEditarTipo && (
+                            <button
+                              type="button"
+                              onClick={() => setEditTipoModal({ id: t.id, nombre: t.nombre })}
+                              className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivarTipo && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmModal({
+                                  type: t.activo ? "inactivarTipo" : "reactivarTipo",
+                                  id: t.id,
+                                })
+                              }
+                              className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                                t.activo
+                                  ? "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
+                                  : "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                              }`}
+                            >
+                              {t.activo ? "Inactivar" : "Reactivar"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -416,6 +491,71 @@ export function VehiculosPage({ user }: Props) {
           </div>
         </section>
       )}
+
+      <ActionModal
+        open={!!editVehiculoModal}
+        title={editVehiculoModal ? `Editar vehículo #${editVehiculoModal.id}` : "Editar vehículo"}
+        confirmText="Guardar cambios"
+        onClose={() => setEditVehiculoModal(null)}
+        onConfirm={() => void handleEditVehiculo()}
+      >
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Placa</label>
+          <input
+            value={editVehiculoModal?.placa ?? ""}
+            onChange={(e) =>
+              setEditVehiculoModal((prev) => (prev ? { ...prev, placa: e.target.value } : prev))
+            }
+            placeholder="ABC123"
+            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Tipo de vehículo</label>
+          <select
+            value={editVehiculoModal?.tipo_vehiculo_id ?? ""}
+            onChange={(e) =>
+              setEditVehiculoModal((prev) => (prev ? { ...prev, tipo_vehiculo_id: e.target.value } : prev))
+            }
+            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          >
+            <option value="">Seleccione...</option>
+            {tiposActivos.map((t) => (
+              <option key={t.id} value={t.id}>{t.nombre}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Tercero propietario</label>
+          <select
+            value={editVehiculoModal?.tercero_id ?? ""}
+            onChange={(e) =>
+              setEditVehiculoModal((prev) => (prev ? { ...prev, tercero_id: e.target.value } : prev))
+            }
+            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+          >
+            <option value="">Seleccione...</option>
+            {tercerosDisponibles.map((t) => (
+              <option key={t.id} value={t.id}>{t.nombre}</option>
+            ))}
+          </select>
+        </div>
+      </ActionModal>
+
+      <ActionModal
+        open={!!editTipoModal}
+        title={editTipoModal ? `Editar tipo de vehículo #${editTipoModal.id}` : "Editar tipo de vehículo"}
+        confirmText="Guardar cambios"
+        onClose={() => setEditTipoModal(null)}
+        onConfirm={() => void handleEditTipo()}
+      >
+        <input
+          value={editTipoModal?.nombre ?? ""}
+          onChange={(e) => setEditTipoModal((prev) => (prev ? { ...prev, nombre: e.target.value } : prev))}
+          placeholder="Nombre del tipo"
+          className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+        />
+      </ActionModal>
 
       <ActionModal
         open={!!confirmModal}

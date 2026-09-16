@@ -564,6 +564,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  editarVehiculo: (id: number, payload: { placa: string; tipo_vehiculo_id: number; tercero_id: number }) =>
+    request<Vehiculo>(`/vehiculos/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   eliminarVehiculo: (id: number) =>
     request<{ ok: boolean }>(`/vehiculos/${id}`, {
       method: "DELETE",
@@ -576,6 +581,11 @@ export const api = {
   crearTipoVehiculo: (payload: { nombre: string }) =>
     request<TipoVehiculo>("/vehiculos/tipos-vehiculo", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  editarTipoVehiculo: (id: number, payload: { nombre: string }) =>
+    request<TipoVehiculo>(`/vehiculos/tipos-vehiculo/${id}`, {
+      method: "PUT",
       body: JSON.stringify(payload),
     }),
   eliminarTipoVehiculo: (id: number) =>

@@ -37,7 +37,9 @@ export function UsuariosPage({ user }: Props) {
     nombre: string;
     email: string;
     rol: User["rol"];
+    sub_rol: "COINTRA_ADMIN" | "COINTRA_USER" | null;
     cliente_id?: number | null;
+    tercero_id?: number | null;
     operacion_ids: number[];
     rol_id: string;
   } | null>(null);
@@ -154,6 +156,10 @@ export function UsuariosPage({ user }: Props) {
       await api.editarUsuario(editModal.id, {
         nombre: editModal.nombre.trim(),
         email: editModal.email.trim(),
+        rol: editModal.rol,
+        sub_rol: editModal.rol === "COINTRA" ? editModal.sub_rol ?? "COINTRA_USER" : null,
+        cliente_id: editModal.rol === "CLIENTE" ? editModal.cliente_id : null,
+        tercero_id: editModal.rol === "TERCERO" ? editModal.tercero_id : null,
         operacion_ids: editModal.rol === "CLIENTE" ? editModal.operacion_ids : undefined,
         rol_id: editModal.rol_id === ROL_AUTOMATICO ? null : Number(editModal.rol_id),
       });
@@ -415,7 +421,9 @@ export function UsuariosPage({ user }: Props) {
                                   nombre: u.nombre,
                                   email: u.email,
                                   rol: u.rol,
+                                  sub_rol: u.sub_rol ?? null,
                                   cliente_id: u.cliente_id,
+                                  tercero_id: u.tercero_id,
                                   operacion_ids: u.operacion_ids ?? [],
                                   rol_id: rolActual && !rolActual.es_superadmin ? String(rolActual.id) : ROL_AUTOMATICO,
                                 });
@@ -478,6 +486,89 @@ export function UsuariosPage({ user }: Props) {
           type="email"
           className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
         />
+        {editModal && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Rol</label>
+            <select
+              value={editModal.rol}
+              onChange={(e) => {
+                const nextRole = e.target.value as User["rol"];
+                setEditModal((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        rol: nextRole,
+                        cliente_id: nextRole === "CLIENTE" ? prev.cliente_id : null,
+                        tercero_id: nextRole === "TERCERO" ? prev.tercero_id : null,
+                        operacion_ids: nextRole === "CLIENTE" ? prev.operacion_ids : [],
+                        sub_rol: nextRole === "COINTRA" ? prev.sub_rol ?? "COINTRA_USER" : null,
+                      }
+                    : prev
+                );
+              }}
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="CLIENTE">CLIENTE</option>
+              <option value="TERCERO">TERCERO</option>
+              <option value="COINTRA">COINTRA</option>
+            </select>
+          </div>
+        )}
+        {editModal?.rol === "COINTRA" && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Subrol Cointra</label>
+            <select
+              value={editModal.sub_rol ?? "COINTRA_USER"}
+              onChange={(e) =>
+                setEditModal((prev) =>
+                  prev ? { ...prev, sub_rol: e.target.value as "COINTRA_ADMIN" | "COINTRA_USER" } : prev
+                )
+              }
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="COINTRA_USER">COINTRA_USER</option>
+              <option value="COINTRA_ADMIN">COINTRA_ADMIN</option>
+            </select>
+          </div>
+        )}
+        {editModal?.rol === "TERCERO" && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Tercero asociado</label>
+            <select
+              value={editModal.tercero_id ? String(editModal.tercero_id) : ""}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setEditModal((prev) => (prev ? { ...prev, tercero_id: value > 0 ? value : null } : prev));
+              }}
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Seleccione...</option>
+              {tercerosActivos.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {editModal?.rol === "CLIENTE" && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Cliente asociado</label>
+            <select
+              value={editModal.cliente_id ? String(editModal.cliente_id) : ""}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setEditModal((prev) =>
+                  prev ? { ...prev, cliente_id: value > 0 ? value : null, operacion_ids: [] } : prev
+                );
+              }}
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Seleccione...</option>
+              {clientesActivos.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {editModal?.rol === "CLIENTE" && (
           <>
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral">Operaciones asignadas</p>

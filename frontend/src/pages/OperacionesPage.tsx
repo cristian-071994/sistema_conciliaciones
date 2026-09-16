@@ -31,6 +31,7 @@ export function OperacionesPage({ user }: Props) {
   const [editModal, setEditModal] = useState<{
     id: number;
     cliente_id: number;
+    tercero_id: number;
     nombre: string;
     porcentaje: string;
     cliente_usuario_ids: number[];
@@ -101,6 +102,7 @@ export function OperacionesPage({ user }: Props) {
     setEditModal({
       id: op.id,
       cliente_id: op.cliente_id,
+      tercero_id: op.tercero_id,
       nombre: op.nombre,
       porcentaje: String(op.porcentaje_rentabilidad),
       cliente_usuario_ids: [...(op.cliente_usuario_ids ?? [])],
@@ -150,6 +152,8 @@ export function OperacionesPage({ user }: Props) {
       if (puedeEditar) {
         await api.editarOperacion(editModal.id, {
           nombre: editModal.nombre.trim(),
+          cliente_id: editModal.cliente_id,
+          tercero_id: editModal.tercero_id,
           cliente_usuario_ids: editModal.cliente_usuario_ids,
         });
       }
@@ -403,6 +407,49 @@ export function OperacionesPage({ user }: Props) {
             placeholder="Nombre"
             className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
           />
+        )}
+        {puedeEditar && editModal && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Cliente</label>
+            <select
+              value={editModal.cliente_id ? String(editModal.cliente_id) : ""}
+              onChange={(e) => {
+                const clienteId = Number(e.target.value);
+                setEditModal((prev) =>
+                  prev ? { ...prev, cliente_id: clienteId, cliente_usuario_ids: [] } : prev
+                );
+                if (clienteId > 0) {
+                  void loadClienteUsers(clienteId, "edit");
+                } else {
+                  setEditClienteUsers([]);
+                }
+              }}
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Seleccione...</option>
+              {clientesActivos.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {puedeEditar && editModal && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">Tercero</label>
+            <select
+              value={editModal.tercero_id ? String(editModal.tercero_id) : ""}
+              onChange={(e) => {
+                const terceroId = Number(e.target.value);
+                setEditModal((prev) => (prev ? { ...prev, tercero_id: terceroId } : prev));
+              }}
+              className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Seleccione...</option>
+              {tercerosActivos.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
         )}
         {puedeRentabilidad && (
           <input

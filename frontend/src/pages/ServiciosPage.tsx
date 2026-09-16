@@ -37,8 +37,10 @@ export function ServiciosPage({ user }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<{ id: number; action: "inactivar" | "reactivar" } | null>(null);
+  const [editModal, setEditModal] = useState<{ id: number; nombre: string; requiere_origen_destino: boolean } | null>(null);
 
   const puedeCrear = hasPermiso(user, "servicios.crear");
+  const puedeEditar = hasPermiso(user, "servicios.editar");
   const puedeDesactivar = hasPermiso(user, "servicios.desactivar");
   const codigoGenerado = toCodigo(nombre);
 
@@ -69,6 +71,21 @@ export function ServiciosPage({ user }: Props) {
       });
       setNombre("");
       setRequiereOrigenDestino(false);
+      await loadData();
+    } catch (e) {
+      setError(toSpanishError(e));
+    }
+  }
+
+  async function onEditConfirm() {
+    if (!editModal) return;
+    setError("");
+    try {
+      await api.editarServicio(editModal.id, {
+        nombre: editModal.nombre.trim(),
+        requiere_origen_destino: editModal.requiere_origen_destino,
+      });
+      setEditModal(null);
       await loadData();
     } catch (e) {
       setError(toSpanishError(e));
@@ -148,7 +165,7 @@ export function ServiciosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Codigo</th>
                   <th className="border-b border-border px-3 py-2 text-left">Requiere origen/destino</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
-                  {puedeDesactivar && <th className="border-b border-border px-3 py-2 text-left">Accion</th>}
+                  {(puedeEditar || puedeDesactivar) && <th className="border-b border-border px-3 py-2 text-left">Accion</th>}
                 </tr>
               </thead>
               <tbody>
@@ -167,17 +184,36 @@ export function ServiciosPage({ user }: Props) {
                         {row.activo ? "ACTIVO" : "INACTIVO"}
                       </span>
                     </td>
-                    {puedeDesactivar && (
+                    {(puedeEditar || puedeDesactivar) && (
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirm({ id: row.id, action: row.activo ? "inactivar" : "reactivar" })
-                          }
-                          className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                        >
-                          {row.activo ? "Inactivar" : "Reactivar"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {puedeEditar && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditModal({
+                                  id: row.id,
+                                  nombre: row.nombre,
+                                  requiere_origen_destino: row.requiere_origen_destino,
+                                })
+                              }
+                              className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {puedeDesactivar && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirm({ id: row.id, action: row.activo ? "inactivar" : "reactivar" })
+                              }
+                              className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                            >
+                              {row.activo ? "Inactivar" : "Reactivar"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -188,6 +224,37 @@ export function ServiciosPage({ user }: Props) {
         )}
         {!!error && <p className="mt-3 text-sm font-medium text-danger">{error}</p>}
       </section>
+
+      <ActionModal
+        open={!!editModal}
+        title={editModal ? `Editar servicio #${editModal.id}` : "Editar servicio"}
+        confirmText="Guardar cambios"
+        onClose={() => setEditModal(null)}
+        onConfirm={() => void onEditConfirm()}
+      >
+        <input
+          value={editModal?.nombre ?? ""}
+          onChange={(e) => setEditModal((prev) => (prev ? { ...prev, nombre: e.target.value } : prev))}
+          placeholder="Nombre"
+          className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+        />
+        {editModal?.nombre.trim() && (
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-neutral">
+            Código: <span className="font-mono font-semibold">{toCodigo(editModal.nombre)}</span>
+          </div>
+        )}
+        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={editModal?.requiere_origen_destino ?? false}
+            onChange={(e) =>
+              setEditModal((prev) => (prev ? { ...prev, requiere_origen_destino: e.target.checked } : prev))
+            }
+            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+          />
+          Este servicio requiere origen y destino en el formulario de viajes/adicionales.
+        </label>
+      </ActionModal>
 
       <ActionModal
         open={!!confirm}
