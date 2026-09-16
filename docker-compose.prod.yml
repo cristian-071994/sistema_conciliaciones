@@ -1,23 +1,29 @@
 services:
   db:
-    image: postgres:16
-    container_name: conciliacion_db_v12
+    image: postgres:18
+    container_name: refrigerados_db
     restart: always
     environment:
-      POSTGRES_USER: cointra_user_conciliaciones
-      POSTGRES_PASSWORD: C01ntra21$
-      POSTGRES_DB: conciliacion_db_v12
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - postgres_data_v12:/var/lib/postgresql/data
+      - refrigerados_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   backend:
     build: ./backend
-    container_name: conciliacion_backend_v12
+    container_name: refrigerados_backend
     restart: always
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     env_file:
       - ./backend/.env.prod
 
@@ -26,13 +32,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        VITE_API_URL: http://conciliaciones.cointra.com.co/api
-    container_name: conciliacion_frontend_v12
+        VITE_API_URL: https://refrigerados.cointra.com.co/api
+    container_name: refrigerados_frontend
     restart: always
     depends_on:
       - backend
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
 
 volumes:
-  postgres_data_v12:
+  refrigerados_postgres_data:

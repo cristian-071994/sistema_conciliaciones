@@ -24,6 +24,7 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 # Node / Frontend
 node_modules/
