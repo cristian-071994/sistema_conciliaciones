@@ -519,6 +519,7 @@ def _build_conciliacion_excel(
     quincena_widths = {
         "Manifiesto": 18,
         "Fecha Emision": 18,
+        "Fecha Cumplida": 18,
         "Placa Vehiculo": 16,
         "Trayler": 16,
         "Remesa": 18,

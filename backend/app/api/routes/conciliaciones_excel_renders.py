@@ -130,6 +130,7 @@ def _xl_manifest_context(item: ConciliacionItem, ctx: _ExcelContext) -> dict[str
         "trayler": avansat.get("trayler") or "",
         "ciudad_origen": avansat.get("ciudad_origen") or item.origen or "",
         "ciudad_destino": avansat.get("ciudad_destino") or item.destino or "",
+        "fecha_cumplida": avansat.get("fecha_cumplida") or "",
         "remesas": remesas_rows,
     }
 
@@ -161,6 +162,7 @@ def _xl_write_adicionales_unified_section(
     headers = [
         "Manifiesto",
         "Fecha Emision",
+        "Fecha Cumplida",
         "Placa Vehiculo",
         "Trayler",
         "Remesa",
@@ -232,6 +234,7 @@ def _xl_write_adicionales_unified_section(
                 values = {
                     "Manifiesto": manifiesto_str if first_row else "",
                     "Fecha Emision": manifest_data["fecha_emision"],
+                    "Fecha Cumplida": manifest_data["fecha_cumplida"],
                     "Placa Vehiculo": placa,
                     "Trayler": manifest_data["trayler"],
                     "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
@@ -270,6 +273,7 @@ def _xl_write_transport_section(
     headers = [
         "Manifiesto",
         "Fecha Emision",
+        "Fecha Cumplida",
         "Placa Vehiculo",
         "Trayler",
         "Remesa",
@@ -326,6 +330,7 @@ def _xl_write_transport_section(
                     values = {
                         "Manifiesto": manifest_data["manifiesto"],
                         "Fecha Emision": manifest_data["fecha_emision"],
+                        "Fecha Cumplida": manifest_data["fecha_cumplida"],
                         "Placa Vehiculo": placa,
                         "Trayler": manifest_data["trayler"],
                         "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),
@@ -377,6 +382,7 @@ def _xl_write_transport_section(
             values = {
                 "Manifiesto": manifest_data["manifiesto"],
                 "Fecha Emision": manifest_data["fecha_emision"],
+                "Fecha Cumplida": manifest_data["fecha_cumplida"],
                 "Placa Vehiculo": placa,
                 "Trayler": manifest_data["trayler"],
                 "Remesa": str((remesa_row or {}).get("remesa") or "").strip(),

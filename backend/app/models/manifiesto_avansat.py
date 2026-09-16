@@ -18,5 +18,6 @@ class ManifiestoAvansat(Base):
     producto: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ciudad_origen: Mapped[str | None] = mapped_column(String(120), nullable=True)
     ciudad_destino: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fecha_cumplida: Mapped[str | None] = mapped_column(String(100), nullable=True)
     remesas_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

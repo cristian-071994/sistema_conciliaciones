@@ -41,6 +41,7 @@ def _cache_row_to_payload(row: ManifiestoAvansat) -> dict:
         "producto": row.producto,
         "ciudad_origen": row.ciudad_origen,
         "ciudad_destino": row.ciudad_destino,
+        "fecha_cumplida": row.fecha_cumplida,
         "remesas": remesas,
     }
 
@@ -68,6 +69,7 @@ def _insert_if_missing_manifiesto(db: Session, manifiesto: str, payload: dict) -
     row.producto = str(payload.get("producto") or "").strip() or None
     row.ciudad_origen = str(payload.get("ciudad_origen") or "").strip() or None
     row.ciudad_destino = str(payload.get("ciudad_destino") or "").strip() or None
+    row.fecha_cumplida = str(payload.get("fecha_cumplida") or "").strip() or None
     remesas = payload.get("remesas")
     row.remesas_json = json.dumps(remesas if isinstance(remesas, list) else [], ensure_ascii=True)
     row.created_at = datetime.utcnow()

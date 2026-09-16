@@ -110,6 +110,7 @@ def _normalize_record_payload(record: dict) -> dict:
         ),
         "ciudad_origen": _pick(record, "ciudad_origen", "origen"),
         "ciudad_destino": _pick(record, "ciudad_destino", "destino"),
+        "fecha_cumplida": _pick(record, "fecha_cumplida", "fecha_cumplido_manifiesto"),
         "remesas": normalized_remesas,
     }
 
