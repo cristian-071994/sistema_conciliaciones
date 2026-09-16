@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +17,7 @@ from app.services.permisos_service import permisos_de_usuario
 from app.services.rate_limit import ensure_not_rate_limited, register_failed_attempt, reset_attempts
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 def _validate_new_password(new_password: str, confirm_password: str) -> None:
@@ -94,13 +96,19 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         "Si no solicitaste este cambio, puedes ignorar este mensaje.\n"
     )
 
-    send_manual_email(
+    send_result = send_manual_email(
         [user.email],
         subject="Recuperacion de password - Refrigerados",
         body=email_body,
     )
     # No se distingue el resultado del envío en la respuesta (ver arriba);
-    # un fallo de SMTP se puede monitorear por logs/servicio, no por la API.
+    # un fallo de SMTP se monitorea por logs, nunca por la API.
+    if send_result["failed"]:
+        logger.warning(
+            "No se pudo enviar el correo de recuperacion de password a usuario_id=%s: %s",
+            user.id,
+            "; ".join(send_result["errors"]) or "error desconocido",
+        )
     return generic_message
 
 
