@@ -40,12 +40,28 @@ const ESTADOS_GESTION_ORDEN: EstadoGestionSolicitud[] = [
   "CONCILIADO",
 ];
 
+const MESES_LABEL = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+function parseFechaViaje(fecha: string): { anio: number; mes: number } | null {
+  const match = /^(\d{4})-(\d{2})-\d{2}/.exec(fecha);
+  if (!match) return null;
+  return { anio: Number(match[1]), mes: Number(match[2]) };
+}
+
 export default function SolicitudesScreen() {
   const router = useRouter();
   const [solicitudes, setSolicitudes] = useState<SolicitudViajeAdicional[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+
+  const hoy = new Date();
+  const [modoFiltro, setModoFiltro] = useState<"mes" | "año">("mes");
+  const [anio, setAnio] = useState(hoy.getFullYear());
+  const [mes, setMes] = useState(hoy.getMonth() + 1);
 
   async function loadData() {
     setError("");
@@ -69,23 +85,59 @@ export default function SolicitudesScreen() {
     setRefreshing(false);
   }
 
+  const solicitudesFiltradas = useMemo(() => {
+    return solicitudes.filter((s) => {
+      const fecha = parseFechaViaje(s.fecha_viaje);
+      if (!fecha) return false;
+      if (fecha.anio !== anio) return false;
+      if (modoFiltro === "mes" && fecha.mes !== mes) return false;
+      return true;
+    });
+  }, [solicitudes, modoFiltro, anio, mes]);
+
+  function irPeriodoAnterior() {
+    if (modoFiltro === "año") {
+      setAnio((a) => a - 1);
+      return;
+    }
+    if (mes === 1) {
+      setMes(12);
+      setAnio((a) => a - 1);
+    } else {
+      setMes((m) => m - 1);
+    }
+  }
+
+  function irPeriodoSiguiente() {
+    if (modoFiltro === "año") {
+      setAnio((a) => a + 1);
+      return;
+    }
+    if (mes === 12) {
+      setMes(1);
+      setAnio((a) => a + 1);
+    } else {
+      setMes((m) => m + 1);
+    }
+  }
+
   const stats = useMemo(() => {
     const porEstado = ESTADOS_GESTION_ORDEN.reduce(
       (acc, estado) => ({ ...acc, [estado]: 0 }),
       {} as Record<EstadoGestionSolicitud, number>
     );
     let conManifiesto = 0;
-    for (const s of solicitudes) {
+    for (const s of solicitudesFiltradas) {
       porEstado[s.estado_gestion] += 1;
       if (s.manifiesto) conManifiesto += 1;
     }
     return {
-      total: solicitudes.length,
+      total: solicitudesFiltradas.length,
       conManifiesto,
-      sinManifiesto: solicitudes.length - conManifiesto,
+      sinManifiesto: solicitudesFiltradas.length - conManifiesto,
       porEstado,
     };
-  }, [solicitudes]);
+  }, [solicitudesFiltradas]);
 
   if (loading) {
     return (
@@ -99,12 +151,29 @@ export default function SolicitudesScreen() {
     <FlatList
       style={styles.screen}
       contentContainerStyle={styles.content}
-      data={solicitudes}
+      data={solicitudesFiltradas}
       keyExtractor={(item) => String(item.id)}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
-      ListHeaderComponent={solicitudes.length > 0 ? <EstadisticasPanel stats={stats} /> : null}
+      ListHeaderComponent={
+        <>
+          <SelectorPeriodo
+            modo={modoFiltro}
+            setModo={setModoFiltro}
+            anio={anio}
+            mes={mes}
+            onAnterior={irPeriodoAnterior}
+            onSiguiente={irPeriodoSiguiente}
+          />
+          {solicitudesFiltradas.length > 0 && <EstadisticasPanel stats={stats} />}
+        </>
+      }
       ListEmptyComponent={
-        <Text style={styles.empty}>{error || "No tienes solicitudes registradas todavía."}</Text>
+        <Text style={styles.empty}>
+          {error ||
+            (solicitudes.length === 0
+              ? "No tienes solicitudes registradas todavía."
+              : "No tienes solicitudes en este período.")}
+        </Text>
       }
       renderItem={({ item }) => (
         <View style={[styles.card, !item.manifiesto && styles.cardSinManifiesto]}>
@@ -145,6 +214,53 @@ export default function SolicitudesScreen() {
         </View>
       )}
     />
+  );
+}
+
+function SelectorPeriodo({
+  modo,
+  setModo,
+  anio,
+  mes,
+  onAnterior,
+  onSiguiente,
+}: {
+  modo: "mes" | "año";
+  setModo: (m: "mes" | "año") => void;
+  anio: number;
+  mes: number;
+  onAnterior: () => void;
+  onSiguiente: () => void;
+}) {
+  const etiqueta = modo === "mes" ? `${MESES_LABEL[mes - 1]} ${anio}` : String(anio);
+  return (
+    <View style={styles.periodoPanel}>
+      <View style={styles.periodoToggleRow}>
+        <TouchableOpacity
+          style={[styles.periodoToggleBtn, modo === "mes" && styles.periodoToggleBtnActive]}
+          onPress={() => setModo("mes")}
+        >
+          <Text style={[styles.periodoToggleText, modo === "mes" && styles.periodoToggleTextActive]}>Mes</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.periodoToggleBtn, modo === "año" && styles.periodoToggleBtnActive]}
+          onPress={() => setModo("año")}
+        >
+          <Text style={[styles.periodoToggleText, modo === "año" && styles.periodoToggleTextActive]}>
+            Año completo
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.periodoNavRow}>
+        <TouchableOpacity style={styles.periodoNavBtn} onPress={onAnterior}>
+          <Text style={styles.periodoNavBtnText}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.periodoLabel}>{etiqueta}</Text>
+        <TouchableOpacity style={styles.periodoNavBtn} onPress={onSiguiente}>
+          <Text style={styles.periodoNavBtnText}>›</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -222,6 +338,42 @@ const styles = StyleSheet.create({
   },
   linkButtonText: { color: colors.success, fontWeight: "600", fontSize: 12 },
   sinManifiesto: { color: colors.danger, fontSize: 12, fontWeight: "600" },
+
+  periodoPanel: {
+    backgroundColor: colors.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginBottom: 12,
+  },
+  periodoToggleRow: {
+    flexDirection: "row",
+    backgroundColor: colors.bg,
+    borderRadius: 999,
+    padding: 3,
+    marginBottom: 10,
+  },
+  periodoToggleBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 999,
+    alignItems: "center",
+  },
+  periodoToggleBtnActive: { backgroundColor: colors.primary },
+  periodoToggleText: { fontSize: 12, fontWeight: "700", color: colors.neutral },
+  periodoToggleTextActive: { color: colors.white },
+  periodoNavRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  periodoNavBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
+  },
+  periodoNavBtnText: { fontSize: 18, fontWeight: "700", color: colors.primary },
+  periodoLabel: { fontSize: 15, fontWeight: "700", fontStyle: "italic", color: colors.text, textTransform: "capitalize" },
 
   statsPanel: {
     backgroundColor: colors.white,
