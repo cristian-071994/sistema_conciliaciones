@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { api } from "../../src/api";
 import { formatCOP } from "../../src/format";
 import { colors } from "../../src/theme";
-import type { SolicitudViajeAdicional } from "../../src/types";
+import type { EstadoGestionSolicitud, SolicitudViajeAdicional } from "../../src/types";
 
 // Estado real dentro del proceso de conciliación (ver
 // EstadoGestionViajeAdicional en el backend) — no el campo manual `estado`.
@@ -27,6 +27,18 @@ const ESTADO_GESTION_COLOR: Record<SolicitudViajeAdicional["estado_gestion"], st
   APROBADA: colors.success,
   CONCILIADO: colors.success,
 };
+
+// Orden fijo de despliegue del desglose por estado en el panel de
+// estadísticas (mismo orden en el que avanza una solicitud en la práctica).
+const ESTADOS_GESTION_ORDEN: EstadoGestionSolicitud[] = [
+  "PENDIENTE_TARIFA",
+  "PENDIENTE_MANIFIESTO",
+  "SIN_CONCILIAR",
+  "EN_BORRADOR",
+  "EN_REVISION",
+  "APROBADA",
+  "CONCILIADO",
+];
 
 export default function SolicitudesScreen() {
   const router = useRouter();
@@ -57,6 +69,24 @@ export default function SolicitudesScreen() {
     setRefreshing(false);
   }
 
+  const stats = useMemo(() => {
+    const porEstado = ESTADOS_GESTION_ORDEN.reduce(
+      (acc, estado) => ({ ...acc, [estado]: 0 }),
+      {} as Record<EstadoGestionSolicitud, number>
+    );
+    let conManifiesto = 0;
+    for (const s of solicitudes) {
+      porEstado[s.estado_gestion] += 1;
+      if (s.manifiesto) conManifiesto += 1;
+    }
+    return {
+      total: solicitudes.length,
+      conManifiesto,
+      sinManifiesto: solicitudes.length - conManifiesto,
+      porEstado,
+    };
+  }, [solicitudes]);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -72,13 +102,17 @@ export default function SolicitudesScreen() {
       data={solicitudes}
       keyExtractor={(item) => String(item.id)}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
+      ListHeaderComponent={solicitudes.length > 0 ? <EstadisticasPanel stats={stats} /> : null}
       ListEmptyComponent={
         <Text style={styles.empty}>{error || "No tienes solicitudes registradas todavía."}</Text>
       }
       renderItem={({ item }) => (
         <View style={[styles.card, !item.manifiesto && styles.cardSinManifiesto]}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>{item.titulo}</Text>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.cardId}>Viaje #{item.id}</Text>
+              <Text style={styles.cardTitle}>{item.titulo}</Text>
+            </View>
             <View style={[styles.badge, { backgroundColor: `${ESTADO_GESTION_COLOR[item.estado_gestion]}22` }]}>
               <Text style={[styles.badgeText, { color: ESTADO_GESTION_COLOR[item.estado_gestion] }]}>
                 {ESTADO_GESTION_LABEL[item.estado_gestion]}
@@ -94,18 +128,66 @@ export default function SolicitudesScreen() {
           </Text>
 
           {item.manifiesto ? (
-            <TouchableOpacity
-              style={styles.linkButton}
-              onPress={() => router.push({ pathname: "/manifiesto/[id]", params: { id: String(item.id) } })}
-            >
-              <Text style={styles.linkButtonText}>Ver manifiesto</Text>
-            </TouchableOpacity>
+            <>
+              <Text style={styles.cardManifiesto}>
+                Manifiesto: {item.manifiesto.numero_manifiesto || "(sin número registrado)"}
+              </Text>
+              <TouchableOpacity
+                style={styles.linkButton}
+                onPress={() => router.push({ pathname: "/manifiesto/[id]", params: { id: String(item.id) } })}
+              >
+                <Text style={styles.linkButtonText}>Ver manifiesto</Text>
+              </TouchableOpacity>
+            </>
           ) : (
             <Text style={styles.sinManifiesto}>Sin manifiesto adjunto todavía</Text>
           )}
         </View>
       )}
     />
+  );
+}
+
+function EstadisticasPanel({
+  stats,
+}: {
+  stats: {
+    total: number;
+    conManifiesto: number;
+    sinManifiesto: number;
+    porEstado: Record<EstadoGestionSolicitud, number>;
+  };
+}) {
+  return (
+    <View style={styles.statsPanel}>
+      <Text style={styles.statsHeading}>Resumen de tus viajes</Text>
+      <View style={styles.statsRowMain}>
+        <View style={styles.statMainTile}>
+          <Text style={styles.statMainNumber}>{stats.total}</Text>
+          <Text style={styles.statMainLabel}>Total</Text>
+        </View>
+        <View style={[styles.statMainTile, { backgroundColor: `${colors.success}14` }]}>
+          <Text style={[styles.statMainNumber, { color: colors.success }]}>{stats.conManifiesto}</Text>
+          <Text style={styles.statMainLabel}>Con manifiesto</Text>
+        </View>
+        <View style={[styles.statMainTile, { backgroundColor: `${colors.danger}14` }]}>
+          <Text style={[styles.statMainNumber, { color: colors.danger }]}>{stats.sinManifiesto}</Text>
+          <Text style={styles.statMainLabel}>Pendiente manifiesto</Text>
+        </View>
+      </View>
+
+      <View style={styles.statsChipsWrap}>
+        {ESTADOS_GESTION_ORDEN.map((estado) => (
+          <View key={estado} style={[styles.statChip, { borderColor: `${ESTADO_GESTION_COLOR[estado]}55` }]}>
+            <View style={[styles.statChipDot, { backgroundColor: ESTADO_GESTION_COLOR[estado] }]} />
+            <Text style={styles.statChipLabel}>{ESTADO_GESTION_LABEL[estado]}</Text>
+            <Text style={[styles.statChipNumber, { color: ESTADO_GESTION_COLOR[estado] }]}>
+              {stats.porEstado[estado]}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -123,12 +205,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardSinManifiesto: { backgroundColor: "#FEF2F2", borderColor: "#FCA5A5" },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
-  cardTitle: { fontSize: 15, fontWeight: "700", color: colors.text, flexShrink: 1, marginRight: 8 },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 },
+  cardId: { fontSize: 11, fontWeight: "700", color: colors.primary, marginBottom: 1 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: colors.text, flexShrink: 1 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   badgeText: { fontSize: 11, fontWeight: "700" },
   cardLine: { fontSize: 13, color: colors.text, marginBottom: 2 },
   cardDate: { fontSize: 12, color: colors.neutral, marginTop: 4, marginBottom: 8 },
+  cardManifiesto: { fontSize: 12, color: colors.text, fontWeight: "600", marginBottom: 8 },
   linkButton: {
     alignSelf: "flex-start",
     backgroundColor: `${colors.success}1A`,
@@ -138,4 +222,37 @@ const styles = StyleSheet.create({
   },
   linkButtonText: { color: colors.success, fontWeight: "600", fontSize: 12 },
   sinManifiesto: { color: colors.danger, fontSize: 12, fontWeight: "600" },
+
+  statsPanel: {
+    backgroundColor: colors.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginBottom: 18,
+  },
+  statsHeading: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: 12 },
+  statsRowMain: { flexDirection: "row", gap: 8 },
+  statMainTile: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  statMainNumber: { fontSize: 20, fontWeight: "800", color: colors.text },
+  statMainLabel: { fontSize: 10, fontWeight: "600", color: colors.neutral, marginTop: 2, textAlign: "center" },
+  statsChipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
+  statChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: colors.white,
+  },
+  statChipDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
+  statChipLabel: { fontSize: 11, color: colors.text, marginRight: 6 },
+  statChipNumber: { fontSize: 11, fontWeight: "800" },
 });

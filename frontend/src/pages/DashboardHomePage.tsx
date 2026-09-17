@@ -82,7 +82,7 @@ export function DashboardHomePage({ user }: Props) {
   }
 
   function formatCurrency(value: number): string {
-    return `$ ${formatCOP(value)}`;
+    return formatCOP(value);
   }
 
   function StatCard({
@@ -826,9 +826,9 @@ export function DashboardHomePage({ user }: Props) {
                 return (
                   <tr key={row.placa} className="hover:bg-slate-50/60">
                     <td className="px-4 py-2 font-semibold text-slate-800">{row.placa}</td>
-                    <td className="px-4 py-2 text-right text-sky-700">$ {formatCOP(v)}</td>
-                    <td className="px-4 py-2 text-right text-violet-700">$ {formatCOP(d)}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-slate-900">$ {formatCOP(t)}</td>
+                    <td className="px-4 py-2 text-right text-sky-700">{formatCOP(v)}</td>
+                    <td className="px-4 py-2 text-right text-violet-700">{formatCOP(d)}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCOP(t)}</td>
                     <td className="px-4 py-2">
                       <div
                         className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100"
@@ -1114,7 +1114,7 @@ function KpiDrillDownModal({
   onClose: () => void;
 }) {
   function fmt(v: number) {
-    return `$ ${formatCOP(v)}`;
+    return formatCOP(v);
   }
   const [modalViajes, setModalViajes] = useState<Viaje[]>([]);
   const [modalLoading, setModalLoading] = useState(true);

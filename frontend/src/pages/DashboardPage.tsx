@@ -34,7 +34,7 @@ function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
   }
-  return `$ ${formatCOP(value)}`;
+  return formatCOP(value);
 }
 
 function getDateSortValue(value: string | null | undefined): number {

@@ -84,7 +84,7 @@ export function CatalogoTarifasPage({ user }: Props) {
   }, [form.tarifa_cliente, form.rentabilidad_pct]);
 
   function formatMoney(value: number | null): string {
-    return value == null ? "-" : `$ ${formatCOP(value)}`;
+    return value == null ? "-" : formatCOP(value);
   }
 
   const rowsFiltradas = useMemo(() => {

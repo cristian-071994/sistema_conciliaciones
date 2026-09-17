@@ -259,7 +259,15 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
   heading: { fontSize: 18, fontWeight: "700", color: colors.text, marginBottom: 4 },
   helper: { fontSize: 13, color: colors.neutral, marginBottom: 16, lineHeight: 18 },
-  label: { fontSize: 12, fontWeight: "600", color: colors.neutral, marginBottom: 4, marginTop: 12, textTransform: "uppercase" },
+  label: {
+    fontSize: 12,
+    fontWeight: "700",
+    fontStyle: "italic",
+    color: colors.neutral,
+    marginBottom: 4,
+    marginTop: 12,
+    textTransform: "uppercase",
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,

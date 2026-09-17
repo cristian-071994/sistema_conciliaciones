@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -61,6 +62,18 @@ export default function NuevaSolicitudScreen() {
   useEffect(() => {
     void api.operaciones().then(setOperaciones).catch(() => setOperaciones([]));
     void api.rutasTarifa().then(setRutas).catch(() => setRutas([]));
+  }, []);
+
+  // Cuando aparece el teclado, sube el scroll hasta el final del formulario
+  // para que el botón "Enviar solicitud" quede visible arriba del teclado
+  // en vez de quedar tapado (el paddingBottom extra del contentContainer
+  // deja espacio suficiente para que el scroll llegue hasta ahí).
+  useEffect(() => {
+    const evento = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const sub = Keyboard.addListener(evento, () => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -359,10 +372,18 @@ function ConfirmacionSolicitudModal({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 16, paddingBottom: 40 },
+  content: { padding: 16, paddingBottom: 220 },
   heading: { fontSize: 18, fontWeight: "700", color: colors.text, marginBottom: 4 },
   helper: { fontSize: 13, color: colors.neutral, marginBottom: 16 },
-  label: { fontSize: 12, fontWeight: "600", color: colors.neutral, marginBottom: 4, marginTop: 12, textTransform: "uppercase" },
+  label: {
+    fontSize: 12,
+    fontWeight: "700",
+    fontStyle: "italic",
+    color: colors.neutral,
+    marginBottom: 4,
+    marginTop: 12,
+    textTransform: "uppercase",
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
