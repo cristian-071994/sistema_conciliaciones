@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Viajes Adicionales Cointra",
+    "name": "Refrigerados Cointra",
     "slug": "cointra-viajes-adicionales",
     "scheme": "cointraviajes",
     "version": "1.0.0",
@@ -14,7 +14,7 @@
     "android": {
       "package": "co.com.cointra.viajesadicionales",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

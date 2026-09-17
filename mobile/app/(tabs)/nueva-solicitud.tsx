@@ -186,7 +186,11 @@ export default function NuevaSolicitudScreen() {
 
       <Text style={styles.label}>Operación</Text>
       <View style={styles.pickerWrap}>
-        <Picker selectedValue={operacionId ?? ""} onValueChange={(v) => setOperacionId(v ? Number(v) : null)}>
+        <Picker
+          selectedValue={operacionId ?? ""}
+          onValueChange={(v) => setOperacionId(v ? Number(v) : null)}
+          style={{ color: colors.text }}
+        >
           <Picker.Item label="Seleccione..." value="" />
           {operaciones.map((op) => (
             <Picker.Item key={op.id} label={op.nombre} value={op.id} />
@@ -200,6 +204,7 @@ export default function NuevaSolicitudScreen() {
           selectedValue={vehiculoId ?? ""}
           enabled={!!operacionId && !loadingVehiculos}
           onValueChange={(v) => setVehiculoId(v ? Number(v) : null)}
+          style={{ color: colors.text }}
         >
           <Picker.Item label={loadingVehiculos ? "Cargando..." : "Seleccione..."} value="" />
           {vehiculos.map((v) => (
@@ -258,6 +263,7 @@ export default function NuevaSolicitudScreen() {
         <Picker
           selectedValue={origen}
           onValueChange={(v) => { setOrigen(String(v)); setDestino(""); }}
+          style={{ color: colors.text }}
         >
           <Picker.Item label="Seleccione..." value="" />
           {origenes.map((o) => (
@@ -268,7 +274,12 @@ export default function NuevaSolicitudScreen() {
 
       <Text style={styles.label}>Destino</Text>
       <View style={styles.pickerWrap}>
-        <Picker selectedValue={destino} enabled={!!origen} onValueChange={(v) => setDestino(String(v))}>
+        <Picker
+          selectedValue={destino}
+          enabled={!!origen}
+          onValueChange={(v) => setDestino(String(v))}
+          style={{ color: colors.text }}
+        >
           <Picker.Item label="Seleccione..." value="" />
           {destinos.map((d) => (
             <Picker.Item key={d} label={d} value={d} />

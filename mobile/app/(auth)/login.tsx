@@ -19,6 +19,7 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -59,13 +60,22 @@ export default function LoginScreen() {
         />
 
         <Text style={styles.label}>Contraseña</Text>
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          placeholder="Tu contraseña"
-          style={styles.input}
-        />
+        <View style={styles.passwordWrapper}>
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            placeholder="Tu contraseña"
+            style={styles.passwordInput}
+          />
+          <TouchableOpacity
+            style={styles.eyeButton}
+            onPress={() => setShowPassword((prev) => !prev)}
+            accessibilityLabel={showPassword ? "Ocultar contraseña" : "Ver contraseña"}
+          >
+            <Text style={styles.eyeIcon}>{showPassword ? "🙈" : "👁️"}</Text>
+          </TouchableOpacity>
+        </View>
 
         {!!error && <Text style={styles.error}>{error}</Text>}
 
@@ -125,6 +135,27 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: colors.white,
   },
+  passwordWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    marginBottom: 16,
+    backgroundColor: colors.white,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.text,
+  },
+  eyeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  eyeIcon: { fontSize: 16 },
   error: { color: colors.danger, fontSize: 13, marginBottom: 12, fontWeight: "500" },
   button: {
     backgroundColor: colors.primary,

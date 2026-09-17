@@ -94,7 +94,11 @@ export default function TarifasScreen() {
 
         <Text style={styles.label}>Tipo de vehículo</Text>
         <View style={styles.pickerWrap}>
-          <Picker selectedValue={tipoVehiculoId ?? ""} onValueChange={(v) => setTipoVehiculoId(v ? Number(v) : null)}>
+          <Picker
+            selectedValue={tipoVehiculoId ?? ""}
+            onValueChange={(v) => setTipoVehiculoId(v ? Number(v) : null)}
+            style={{ color: colors.text }}
+          >
             <Picker.Item label="Seleccione..." value="" />
             {tipos.map((t) => (
               <Picker.Item key={t.id} label={t.nombre} value={t.id} />
