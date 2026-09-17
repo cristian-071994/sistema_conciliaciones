@@ -521,6 +521,7 @@ def _build_conciliacion_excel(
         "Fecha Emision": 18,
         "Fecha Cumplida": 18,
         "Placa Vehiculo": 16,
+        "Tipo Vehiculo": 20,
         "Trayler": 16,
         "Remesa": 18,
         "Producto": 28,
