@@ -9,6 +9,12 @@ from urllib.request import Request, urlopen
 
 from app.core.config import settings
 
+# Piso de seguridad para el timeout de las peticiones a Avansat: una
+# sincronizacion de un mes completo (rango mas pesado que existe hoy) tardo
+# ~5 minutos en pruebas reales contra la API. AVANSAT_TIMEOUT_SECONDS<=0 ya
+# no significa "esperar para siempre" -- cae a este default para que una
+# peticion colgada libere el hilo en vez de bloquearlo indefinidamente.
+DEFAULT_AVANSAT_TIMEOUT_SECONDS = 480  # 8 minutos
 
 _CACHE_LOCK = threading.Lock()
 _AVANSAT_CACHE: dict[str, tuple[float, dict]] = {}
@@ -139,11 +145,9 @@ def _perform_avansat_request(params: dict[str, str]) -> object:
 
     timeout_seconds = int(settings.avansat_timeout_seconds)
     if timeout_seconds <= 0:
-        with urlopen(req, context=context) as response:
-            raw = response.read().decode("utf-8", errors="ignore")
-    else:
-        with urlopen(req, timeout=timeout_seconds, context=context) as response:
-            raw = response.read().decode("utf-8", errors="ignore")
+        timeout_seconds = DEFAULT_AVANSAT_TIMEOUT_SECONDS
+    with urlopen(req, timeout=timeout_seconds, context=context) as response:
+        raw = response.read().decode("utf-8", errors="ignore")
     return json.loads(raw)
 
 
