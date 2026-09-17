@@ -68,10 +68,13 @@ class CatalogoTarifaOut(ORMModel):
 
 
 class RutaTarifaOut(BaseModel):
-    """Ruta con tarifa activa para VIAJE_ADICIONAL — sin montos, se usa para
-    poblar los desplegables de origen/destino en la app móvil (rol CLIENTE)."""
+    """Ruta con tarifa activa para VIAJE_ADICIONAL -- se usa para poblar los
+    desplegables de origen/destino y el listado filtrable de tarifas en la
+    app móvil. tarifa_cliente sigue la misma regla de visibilidad financiera
+    que el resto del sistema (oculta para Tercero, ver _to_out en tarifas.py)."""
 
     origen: str
     destino: str
     tipo_vehiculo_id: int
     tipo_vehiculo_nombre: str
+    tarifa_cliente: float | None = None

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Redirect, useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -16,8 +16,9 @@ import { Picker } from "@react-native-picker/picker";
 import { useAuth } from "../src/auth";
 import { api, ApiError } from "../src/api";
 import { colors } from "../src/theme";
+import { formatCOP } from "../src/format";
 import { BackHeader } from "../src/components/BackHeader";
-import type { TipoVehiculo } from "../src/types";
+import type { RutaTarifa, TipoVehiculo } from "../src/types";
 
 // Formulario para crear una tarifa de ruta (Viaje Adicional) desde la app:
 // origen + destino + tipo de vehículo + tarifa cliente. El backend calcula
@@ -37,9 +38,45 @@ export default function TarifasScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [tarifaCreada, setTarifaCreada] = useState<{ origen: string; destino: string } | null>(null);
 
+  const [rutas, setRutas] = useState<RutaTarifa[]>([]);
+  const [loadingRutas, setLoadingRutas] = useState(true);
+  const [filtroOrigen, setFiltroOrigen] = useState("");
+  const [filtroDestino, setFiltroDestino] = useState("");
+  const [filtroTipoVehiculoId, setFiltroTipoVehiculoId] = useState<number | null>(null);
+
+  function cargarRutas() {
+    setLoadingRutas(true);
+    api
+      .rutasTarifa()
+      .then(setRutas)
+      .catch(() => setRutas([]))
+      .finally(() => setLoadingRutas(false));
+  }
+
   useEffect(() => {
     void api.tiposVehiculo().then(setTipos).catch(() => setTipos([]));
+    cargarRutas();
   }, []);
+
+  const origenesDisponibles = useMemo(
+    () => Array.from(new Set(rutas.map((r) => r.origen))).sort(),
+    [rutas]
+  );
+  const destinosDisponibles = useMemo(
+    () => Array.from(new Set(rutas.map((r) => r.destino))).sort(),
+    [rutas]
+  );
+  const rutasFiltradas = useMemo(
+    () =>
+      rutas.filter(
+        (r) =>
+          (!filtroOrigen || r.origen === filtroOrigen) &&
+          (!filtroDestino || r.destino === filtroDestino) &&
+          (!filtroTipoVehiculoId || r.tipo_vehiculo_id === filtroTipoVehiculoId)
+      ),
+    [rutas, filtroOrigen, filtroDestino, filtroTipoVehiculoId]
+  );
+  const hayFiltrosActivos = !!filtroOrigen || !!filtroDestino || !!filtroTipoVehiculoId;
 
   if (!user) return <Redirect href="/(auth)/bienvenida" />;
 
@@ -63,6 +100,7 @@ export default function TarifasScreen() {
       setDestino("");
       setTipoVehiculoId(null);
       setTarifaCliente("");
+      cargarRutas();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudo crear la tarifa");
     } finally {
@@ -118,6 +156,80 @@ export default function TarifasScreen() {
         <TouchableOpacity style={styles.button} onPress={onSubmit} disabled={submitting}>
           {submitting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>Guardar tarifa</Text>}
         </TouchableOpacity>
+
+        <View style={styles.divider} />
+
+        <Text style={styles.heading}>Tarifas existentes</Text>
+        <Text style={styles.helper}>Filtra por origen, destino o tipo de vehículo para encontrar una tarifa.</Text>
+
+        <Text style={styles.label}>Origen</Text>
+        <View style={styles.pickerWrap}>
+          <Picker selectedValue={filtroOrigen} onValueChange={(v) => setFiltroOrigen(String(v))} style={{ color: colors.text }}>
+            <Picker.Item label="Todos" value="" />
+            {origenesDisponibles.map((o) => (
+              <Picker.Item key={o} label={o} value={o} />
+            ))}
+          </Picker>
+        </View>
+
+        <Text style={styles.label}>Destino</Text>
+        <View style={styles.pickerWrap}>
+          <Picker selectedValue={filtroDestino} onValueChange={(v) => setFiltroDestino(String(v))} style={{ color: colors.text }}>
+            <Picker.Item label="Todos" value="" />
+            {destinosDisponibles.map((d) => (
+              <Picker.Item key={d} label={d} value={d} />
+            ))}
+          </Picker>
+        </View>
+
+        <Text style={styles.label}>Tipo de vehículo</Text>
+        <View style={styles.pickerWrap}>
+          <Picker
+            selectedValue={filtroTipoVehiculoId ?? ""}
+            onValueChange={(v) => setFiltroTipoVehiculoId(v ? Number(v) : null)}
+            style={{ color: colors.text }}
+          >
+            <Picker.Item label="Todos" value="" />
+            {tipos.map((t) => (
+              <Picker.Item key={t.id} label={t.nombre} value={t.id} />
+            ))}
+          </Picker>
+        </View>
+
+        {hayFiltrosActivos && (
+          <TouchableOpacity
+            style={styles.clearFiltersButton}
+            onPress={() => {
+              setFiltroOrigen("");
+              setFiltroDestino("");
+              setFiltroTipoVehiculoId(null);
+            }}
+          >
+            <Text style={styles.clearFiltersText}>Limpiar filtros</Text>
+          </TouchableOpacity>
+        )}
+
+        {loadingRutas ? (
+          <ActivityIndicator color={colors.primary} style={{ marginTop: 16 }} />
+        ) : rutasFiltradas.length === 0 ? (
+          <Text style={styles.emptyText}>
+            {rutas.length === 0 ? "Todavía no hay tarifas registradas." : "No hay tarifas que coincidan con el filtro."}
+          </Text>
+        ) : (
+          <View style={styles.rutasList}>
+            {rutasFiltradas.map((r) => (
+              <View key={`${r.origen}-${r.destino}-${r.tipo_vehiculo_id}`} style={styles.rutaCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rutaRuta}>
+                    {r.origen} → {r.destino}
+                  </Text>
+                  <Text style={styles.rutaTipo}>{r.tipo_vehiculo_nombre}</Text>
+                </View>
+                {r.tarifa_cliente != null && <Text style={styles.rutaTarifa}>{formatCOP(r.tarifa_cliente)}</Text>}
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={!!tarifaCreada} transparent animationType="fade" onRequestClose={() => setTarifaCreada(null)}>
@@ -174,6 +286,44 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   buttonText: { color: colors.white, fontWeight: "600", fontSize: 14 },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginTop: 28,
+    marginBottom: 20,
+  },
+  clearFiltersButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  clearFiltersText: { color: colors.primary, fontWeight: "600", fontSize: 12 },
+  emptyText: {
+    marginTop: 20,
+    fontSize: 13,
+    color: colors.neutral,
+    textAlign: "center",
+  },
+  rutasList: { marginTop: 20, gap: 10 },
+  rutaCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  rutaRuta: { fontSize: 14, fontWeight: "600", color: colors.text },
+  rutaTipo: { fontSize: 12, color: colors.neutral, marginTop: 2 },
+  rutaTarifa: { fontSize: 14, fontWeight: "700", color: colors.primary, marginLeft: 12 },
 });
 
 const modalStyles = StyleSheet.create({

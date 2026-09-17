@@ -27,13 +27,16 @@ export interface TipoVehiculo {
   activo: boolean;
 }
 
-// Ruta con tarifa activa para Viaje Adicional, sin montos — para poblar los
-// desplegables de origen/destino en el formulario de nueva solicitud.
+// Ruta con tarifa activa para Viaje Adicional — para poblar los
+// desplegables de origen/destino y el listado filtrable de tarifas.
+// tarifa_cliente puede venir null (rol Tercero no la ve, misma regla de
+// visibilidad financiera del resto del sistema).
 export interface RutaTarifa {
   origen: string;
   destino: string;
   tipo_vehiculo_id: number;
   tipo_vehiculo_nombre: string;
+  tarifa_cliente: number | null;
 }
 
 export interface TarifaLookupResult {

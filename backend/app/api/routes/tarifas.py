@@ -130,9 +130,11 @@ def list_catalogo_tarifas(
 
 @router.get("/rutas", response_model=list[RutaTarifaOut])
 def listar_rutas_disponibles(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
-    """Rutas con tarifa activa para Viaje Adicional, sin montos — alimenta
-    los desplegables de origen/destino de la app móvil. Abierto a cualquier
-    usuario autenticado (no expone valores financieros)."""
+    """Rutas con tarifa activa para Viaje Adicional — alimenta los
+    desplegables de origen/destino y el listado filtrable de tarifas de la
+    app móvil. Abierto a cualquier usuario autenticado; tarifa_cliente
+    aplica la misma regla de visibilidad financiera fija que el resto del
+    sistema (oculta para Tercero)."""
     servicio = db.query(Servicio).filter(Servicio.codigo == VIAJE_ADICIONAL_SERVICIO_CODIGO).first()
     if not servicio:
         return []
@@ -154,6 +156,7 @@ def listar_rutas_disponibles(db: Session = Depends(get_db), user: Usuario = Depe
             "destino": row.destino,
             "tipo_vehiculo_id": row.tipo_vehiculo_id,
             "tipo_vehiculo_nombre": row.tipo_vehiculo.nombre if row.tipo_vehiculo else "",
+            "tarifa_cliente": float(row.tarifa_cliente) if user.rol != UserRole.TERCERO else None,
         }
         for row in rows
     ]
