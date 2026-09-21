@@ -395,8 +395,20 @@ Hoy solo existe exportación a Excel de conciliaciones (`conciliaciones_excel.py
 - Filtros disponibles: placa, nombre de tarifa, origen, destino, estado (PENDIENTE, EN_CONCILIACION, APROBADO, RECHAZADO), fecha
 - **Pantalla "Tarifas"** (`app/tarifas.tsx`): autogestión de tarifas de ruta faltantes cuando origen+destino+tipo de vehículo no tienen tarifa en el catálogo — el Cliente solo ingresa `tarifa_cliente`, el sistema calcula el resto (misma regla fija de "el Cliente nunca fija ni ve rentabilidad" que en la web)
 - Misma API del backend — no hay endpoints exclusivos para móvil
-- Autenticación: JWT igual que web, token propio `refrigerados_token`
+- Autenticación: JWT igual que web, token propio (`cointra_viajes_adicionales_token` en `SecureStore`, ver `mobile/src/storage.ts`). Además del access token (dura `ACCESS_TOKEN_EXPIRE_MINUTES`, igual que la web), la app móvil usa un **refresh token** (`cointra_viajes_adicionales_refresh_token`, dura `REFRESH_TOKEN_EXPIRE_DAYS` — 30 días por defecto) para no pedir login de nuevo cada vez que el access token vence — la web ignora el `refresh_token` que ahora también devuelve `/auth/login`. `POST /auth/refresh` (`backend/app/api/routes/auth.py`) lo renueva; `mobile/src/api.ts` reintenta automáticamente una vez ante cualquier 401 antes de forzar logout. Cambiar la password invalida ambos (mismo `token_version`).
 - Ver `mobile/AGENTS.md` antes de escribir código nuevo: Expo SDK 57 cambió APIs (ej. `expo-file-system` se movió a `expo-file-system/legacy`)
+
+### Diseño exclusivo de la app móvil — portada logueada (`app/inicio.tsx`)
+
+La portada logueada de la app móvil (saludo + tarjetas Solicitudes/Tarifas + franja fotográfica inferior) usa una identidad visual **propia y exclusiva de esta pantalla**, distinta de la paleta compartida `mobile/src/theme.ts` → `colors` (esa sigue siendo la misma que `frontend/tailwind.config.js`, sin cambios). No reutilizar estos tokens en otras pantallas sin decidirlo explícitamente — hoy solo cubre la franja inferior de `inicio.tsx`.
+
+- **Tokens de color**: `mobile/src/theme.ts` → `cointraFooter` (`navy #0B2B4D`, `navyDark #001428`, `green #009966`, `orange #FF6600`, `yellow #FFCC00`).
+- **Asset**: `mobile/assets/images/cointra_truck_footer.webp` — foto real (no ilustración generada) de un camión de carga en carretera al atardecer, usada como fondo de la franja inferior con `resizeMode="cover"`. Si se reemplaza, debe seguir siendo una fotografía real proporcionada, nunca generada por IA.
+- **Curvas naranja/verde + franja azul oscuro**: SVG (`react-native-svg`) superpuesto a la foto, independiente de ella — así se adaptan a cualquier tamaño de pantalla sin deformar la imagen. Ver `FOOTER_GREEN_PATH`/`FOOTER_ORANGE_PATH`/`FOOTER_NAVY_TOP` en `inicio.tsx` (ajustados a ojo contra el preview, no es geometría exacta).
+- **Iconos de las tarjetas** (`file-document-edit-outline`, `cash-multiple`): `@expo/vector-icons` (`MaterialCommunityIcons`), en vez de texto plano.
+- **Dependencias nuevas agregadas para este diseño** (antes no estaban en `mobile/package.json`): `react-native-svg` y `@expo/vector-icons`. Ambas instaladas vía `npx expo install` (versión resuelta automáticamente para SDK 57) — **cualquier `npm install` posterior en `mobile/` vuelve a poner en riesgo el parche `buildStagingDirectory` de 7 archivos en `node_modules` que necesita la compilación de release en Windows (ver receta de compilación) — hay que confirmarlo de nuevo antes del próximo build.**
+- **Gotcha de `react-native-svg` en Android (Fabric/New Architecture)**: darle a `<Svg>` el tamaño solo vía `style` (p.ej. `StyleSheet.absoluteFillObject` o `width:"100%"` en el style) resuelve a tamaño **0 en Android nativo** dentro de un contenedor con `flex` — en RN-web sí funciona, lo cual lo hace fácil de pasar por alto si solo se prueba en el preview web. Se debe medir el contenedor con `onLayout` y pasarle a `<Svg>` `width`/`height` **numéricos** (no `"100%"`) — ver `onFooterLayout` en `inicio.tsx`.
+- El layout de `inicio.tsx` reparte el espacio bajo la cabecera con `flex` (`spacer` + `footerVisual`), no con un porcentaje fijo de `Dimensions.get("window").height` — con una altura fija, en dispositivos donde la cabecera mide más que en el preview, la franja fotográfica quedaba empujada fuera de la pantalla visible (la pantalla no tiene scroll).
 
 ---
 
