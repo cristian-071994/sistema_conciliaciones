@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from "react-native";
 // La API "clásica" (cacheDirectory/downloadAsync/getContentUriAsync) se
 // movió a este subpath en SDK 57; la raíz "expo-file-system" ahora expone
 // la API nueva basada en clases File/Directory/Paths.
@@ -8,8 +8,10 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as IntentLauncher from "expo-intent-launcher";
 import { WebView } from "react-native-webview";
 import { api } from "../../src/api";
-import { colors } from "../../src/theme";
-import { BackHeader } from "../../src/components/BackHeader";
+import { brand } from "../../src/theme";
+import { ScreenHeader } from "../../src/components/brand/ScreenHeader";
+import { PrimaryButton } from "../../src/components/ui/Buttons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 // Android WebView no renderiza PDF de forma nativa — se descarga el archivo
 // y se abre con el visor de PDF del sistema vía Intent (ACTION_VIEW).
@@ -79,10 +81,18 @@ export default function ManifiestoScreen() {
 
   if (status === "cargando") {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <BackHeader label="Mis solicitudes" onPress={volverAMisSolicitudes} />
+      <View style={{ flex: 1, backgroundColor: brand.bg }}>
+        <ScreenHeader
+          title="Manifiesto"
+          subtitle={`Viaje #${id}`}
+          icon="file-document-outline"
+          accent={brand.green}
+          accentLight={brand.greenLight}
+          backLabel="Mis solicitudes"
+          onBack={volverAMisSolicitudes}
+        />
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <ActivityIndicator size="large" color={brand.navy} />
           <Text style={styles.helper}>Cargando manifiesto...</Text>
         </View>
       </View>
@@ -91,13 +101,22 @@ export default function ManifiestoScreen() {
 
   if (status === "error") {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <BackHeader label="Mis solicitudes" onPress={volverAMisSolicitudes} />
+      <View style={{ flex: 1, backgroundColor: brand.bg }}>
+        <ScreenHeader
+          title="Manifiesto"
+          subtitle={`Viaje #${id}`}
+          icon="file-document-outline"
+          accent={brand.green}
+          accentLight={brand.greenLight}
+          backLabel="Mis solicitudes"
+          onBack={volverAMisSolicitudes}
+        />
         <View style={styles.center}>
+          <View style={styles.errorIcon}>
+            <MaterialCommunityIcons name="file-alert-outline" size={36} color={brand.danger} />
+          </View>
           <Text style={styles.error}>No se pudo cargar el manifiesto.</Text>
-          <TouchableOpacity style={styles.volverButton} onPress={volverAMisSolicitudes}>
-            <Text style={styles.volverButtonText}>Volver a mis solicitudes</Text>
-          </TouchableOpacity>
+          <PrimaryButton label="Volver a mis solicitudes" icon="arrow-left" onPress={volverAMisSolicitudes} style={styles.volver} />
         </View>
       </View>
     );
@@ -106,23 +125,33 @@ export default function ManifiestoScreen() {
   // Solo llega aquí iOS con el WebView embebido — ahí sí se está revisando
   // el PDF en esta misma pantalla, por eso lleva su propia barra para volver.
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <BackHeader label="Mis solicitudes" onPress={volverAMisSolicitudes} />
+    <View style={{ flex: 1, backgroundColor: brand.bg }}>
+      <ScreenHeader
+          title="Manifiesto"
+          subtitle={`Viaje #${id}`}
+          icon="file-document-outline"
+          accent={brand.green}
+          accentLight={brand.greenLight}
+          backLabel="Mis solicitudes"
+          onBack={volverAMisSolicitudes}
+        />
       {localUri && <WebView source={{ uri: localUri }} style={{ flex: 1 }} />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, padding: 24 },
-  helper: { marginTop: 12, color: colors.neutral, fontSize: 13, textAlign: "center" },
-  error: { color: colors.danger, fontSize: 14, fontWeight: "600", textAlign: "center" },
-  volverButton: {
-    marginTop: 16,
-    backgroundColor: colors.primary,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: brand.bg, padding: 24 },
+  helper: { marginTop: 12, color: brand.textSecondary, fontSize: 14, textAlign: "center" },
+  errorIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: brand.dangerLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
   },
-  volverButtonText: { color: colors.white, fontWeight: "600", fontSize: 13 },
+  error: { color: brand.textPrimary, fontSize: 16, fontWeight: "700", textAlign: "center" },
+  volver: { alignSelf: "stretch" },
 });

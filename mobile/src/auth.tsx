@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { api } from "./api";
-import { storage, TOKEN_STORAGE_KEY } from "./storage";
+import { storage, REFRESH_TOKEN_STORAGE_KEY, TOKEN_STORAGE_KEY } from "./storage";
 import type { User } from "./types";
 
 interface AuthContextValue {
@@ -24,9 +24,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
       try {
+        // Si el access token ya venció (dura 8h), api.me() lo renueva sola
+        // con el refresh token (dura 30 días) antes de fallar — ver
+        // refreshAccessToken() en api.ts. Solo llega aquí al catch si
+        // tampoco hay refresh token válido, y ahí sí hay que pedir login.
         setUser(await api.me());
       } catch {
         await storage.removeItem(TOKEN_STORAGE_KEY);
+        await storage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
       } finally {
         setAuthChecked(true);
       }

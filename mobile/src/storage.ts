@@ -28,3 +28,4 @@ export const storage = {
 };
 
 export const TOKEN_STORAGE_KEY = "cointra_viajes_adicionales_token";
+export const REFRESH_TOKEN_STORAGE_KEY = "cointra_viajes_adicionales_refresh_token";

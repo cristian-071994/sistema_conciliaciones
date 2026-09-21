@@ -1,59 +1,48 @@
-import { Redirect, Tabs, useRouter } from "expo-router";
-import { Text, TouchableOpacity } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Redirect, Tabs } from "expo-router";
 import { useAuth } from "../../src/auth";
-import { colors } from "../../src/theme";
+import { brand } from "../../src/theme";
 
+// Módulo Solicitudes: dos pestañas. El header lo dibuja cada pantalla
+// (ScreenHeader, con la curva de marca), por eso headerShown: false.
 export default function TabsLayout() {
-  const router = useRouter();
-  const { user, logout } = useAuth();
-  // Salir cierra sesión y debe dejar al usuario en la bienvenida, no en el
-  // login (ver app/(auth)/bienvenida.tsx) — por eso el guard también apunta
-  // ahí en vez de a /(auth)/login.
+  const { user } = useAuth();
+  // Salir debe dejar al usuario en la bienvenida, no en el login.
   if (!user) return <Redirect href="/(auth)/bienvenida" />;
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.neutral,
-        headerStyle: { backgroundColor: colors.white },
-        headerTitleStyle: { color: colors.text },
-        // Flecha de volver a Inicio a la izquierda (en vez del texto "Inicio"
-        // que antes iba a la derecha) — misma acción, más fácil de ubicar.
-        headerLeft: () => (
-          <TouchableOpacity
-            onPress={() => router.push("/inicio")}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ marginLeft: 16, flexDirection: "row", alignItems: "center" }}
-          >
-            <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 22, marginRight: 2 }}>‹</Text>
-          </TouchableOpacity>
-        ),
-        headerRight: () => (
-          <TouchableOpacity
-            onPress={() => void logout()}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ marginRight: 16 }}
-          >
-            <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 13 }}>Salir</Text>
-          </TouchableOpacity>
-        ),
+        headerShown: false,
+        tabBarActiveTintColor: brand.navy,
+        tabBarInactiveTintColor: brand.textSecondary,
+        tabBarActiveBackgroundColor: brand.greenLight,
+        tabBarLabelStyle: { fontSize: 12, fontWeight: "700", marginBottom: 4 },
+        tabBarItemStyle: { borderRadius: 16, marginHorizontal: 10, marginVertical: 6 },
+        tabBarStyle: {
+          backgroundColor: brand.white,
+          borderTopWidth: 0,
+          minHeight: 68,
+          shadowColor: brand.navy,
+          shadowOpacity: 0.08,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: -2 },
+          elevation: 12,
+        },
       }}
     >
       <Tabs.Screen
         name="nueva-solicitud"
         options={{
           title: "Nueva solicitud",
-          // Símbolo de texto en vez de @expo/vector-icons: evita sumar otra
-          // dependencia solo para dos íconos de la barra de pestañas.
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>＋</Text>,
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="text-box-plus-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="solicitudes"
         options={{
           title: "Mis solicitudes",
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>☰</Text>,
+          tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="format-list-checks" size={size} color={color} />,
         }}
       />
     </Tabs>
