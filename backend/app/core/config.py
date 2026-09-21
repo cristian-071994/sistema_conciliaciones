@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     app_name: str = "Refrigerados API"
     secret_key: str = "dev_secret_change_me"
     access_token_expire_minutes: int = 480
+    refresh_token_expire_days: int = 30
     database_url: str | None = None
     postgres_host: str = "localhost"
     postgres_port: int = 5432

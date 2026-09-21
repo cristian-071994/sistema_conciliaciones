@@ -23,6 +23,16 @@ def create_access_token(subject: str, token_version: int = 0) -> str:
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
 
 
+def create_refresh_token(subject: str, token_version: int = 0) -> str:
+    # Vida larga (semanas) a diferencia del access token (horas) — solo la app
+    # móvil lo usa hoy, vía POST /auth/refresh, para no pedir login de nuevo
+    # cada vez que el access token vence. Mismo esquema `ver` que el access
+    # token: cambiar la password invalida ambos de inmediato.
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    to_encode = {"sub": subject, "exp": expire, "typ": "refresh", "ver": int(token_version)}
+    return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+
+
 def create_password_reset_token(subject: str, token_version: int = 0) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.password_reset_token_expire_minutes)
     to_encode = {

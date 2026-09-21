@@ -7,10 +7,26 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.config import settings
-from app.core.security import ALGORITHM, create_access_token, create_password_reset_token, get_password_hash, verify_password
+from app.core.security import (
+    ALGORITHM,
+    create_access_token,
+    create_password_reset_token,
+    create_refresh_token,
+    get_password_hash,
+    verify_password,
+)
 from app.db.session import get_db
 from app.models.usuario import Usuario
-from app.schemas.auth import AuthMessage, ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, ResetPasswordRequest, Token
+from app.schemas.auth import (
+    AuthMessage,
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RefreshRequest,
+    RefreshResponse,
+    ResetPasswordRequest,
+    Token,
+)
 from app.schemas.user import UserOut
 from app.services.notifications import send_manual_email
 from app.services.permisos_service import permisos_de_usuario
@@ -41,8 +57,37 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=401, detail="Email o password invalidos")
 
     reset_attempts(rate_key)
-    token = create_access_token(subject=str(user.id), token_version=int(user.token_version or 0))
-    return Token(access_token=token)
+    version = int(user.token_version or 0)
+    token = create_access_token(subject=str(user.id), token_version=version)
+    refresh_token = create_refresh_token(subject=str(user.id), token_version=version)
+    return Token(access_token=token, refresh_token=refresh_token)
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
+    # Mismo patrón de validación que /auth/reset-password: decodifica, exige
+    # typ="refresh" y compara token_version contra el usuario — así un cambio
+    # de password invalida los refresh tokens ya emitidos igual que los access.
+    credentials_exception = HTTPException(status_code=401, detail="Refresh token invalido o expirado")
+    try:
+        token_payload = jwt.decode(payload.refresh_token, settings.secret_key, algorithms=[ALGORITHM])
+        token_type = str(token_payload.get("typ") or "")
+        user_id = int(token_payload.get("sub"))
+        token_version = int(token_payload.get("ver", 0))
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    if token_type != "refresh":
+        raise credentials_exception
+
+    user = db.get(Usuario, user_id)
+    if not user or not user.activo:
+        raise credentials_exception
+    if int(user.token_version or 0) != token_version:
+        raise credentials_exception
+
+    new_access_token = create_access_token(subject=str(user.id), token_version=int(user.token_version or 0))
+    return RefreshResponse(access_token=new_access_token)
 
 
 @router.get("/me", response_model=UserOut)
