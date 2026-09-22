@@ -610,7 +610,8 @@ export function DashboardHomePage({ user }: Props) {
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           <span>Barra: {metricLabel.toLowerCase()} | Línea: acumulado %</span>
         </div>
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-[280px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-sky-50/40">
+        <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-[280px] w-full min-w-[700px] rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-sky-50/40">
           {Array.from({ length: 4 }).map((_, idx) => {
             const y = topPad + (idx / 3) * chartH;
             const moneyValue = maxGan * (1 - idx / 3);
@@ -654,6 +655,7 @@ export function DashboardHomePage({ user }: Props) {
             );
           })}
         </svg>
+        </div>
       </article>
     );
   }
@@ -712,7 +714,8 @@ export function DashboardHomePage({ user }: Props) {
           </div>
         </div>
 
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
+        <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full min-w-[760px] rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
           {Array.from({ length: 4 }).map((_, idx) => {
             const y = topPad + (idx / 3) * chartH;
             const metricValue = maxGanancia * (1 - idx / 3);
@@ -787,6 +790,7 @@ export function DashboardHomePage({ user }: Props) {
             );
           })}
         </svg>
+        </div>
       </article>
     );
   }
@@ -955,14 +959,14 @@ export function DashboardHomePage({ user }: Props) {
       )}
 
       {loading || !data ? (
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           {Array.from({ length: 10 }).map((_, idx) => (
             <div key={idx} className="h-24 animate-pulse rounded-2xl border border-border bg-white" />
           ))}
         </section>
       ) : (
         <>
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {isCointra ? (
               <>
                 <StatCard title="Ingresos" value={formatCurrency(data.kpis.ingresos)} hint="Tarifa cliente acumulada" onClick={() => setDrillDown({ type: "ingresos", title: "Ingresos — detalle de servicios" })} />
@@ -1009,7 +1013,7 @@ export function DashboardHomePage({ user }: Props) {
             )}
           </section>
 
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {isCointra && <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} onClick={() => setDrillDown({ type: "conciliados", title: "Servicios conciliados" })} />}
             <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
             <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
@@ -1018,7 +1022,7 @@ export function DashboardHomePage({ user }: Props) {
             <StatCard title="Facturadas" value={String(data.kpis.conc_facturada)} hint="Factura enviada al cliente" tone="facturada" onClick={goToConciliacionesList} />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-3">
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             {isCointra ? (
               <TendenciaRentabilidad rows={data.charts.serie} />
             ) : (
@@ -1031,13 +1035,13 @@ export function DashboardHomePage({ user }: Props) {
             <EmbudoConciliaciones />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-3">
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <BarList title="Servicios por tipo" rows={data.charts.items_tipo} />
             <BarList title="Items por estado" rows={data.charts.items_estado} />
             <CostoPorTipoList rows={data.charts.costo_por_tipo} />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <GraficoOperacionesGananciaServicios
               rows={
                 isCointra
@@ -1067,7 +1071,7 @@ export function DashboardHomePage({ user }: Props) {
             )}
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {isCointra && <ParetoGanancia title="Pareto de ganancia por tercero" rows={data.charts.top_terceros} />}
             <TopTable
               title={isCointra ? "Top placas con mayor ganancia" : `Top placas con mayor ${roleMoneyTitle.toLowerCase()}`}
