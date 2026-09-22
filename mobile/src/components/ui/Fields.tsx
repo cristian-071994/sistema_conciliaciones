@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import type { ComponentProps, ReactNode } from "react";
-import { StyleSheet, Text, TextInput, TextInputProps, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TextInput, TextInputProps, TouchableOpacity, useColorScheme, View } from "react-native";
 import { brand } from "../../theme";
 
 type IconName = ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -74,6 +74,13 @@ export function SelectField({
   placeholder?: string;
   enabled?: boolean;
 }) {
+  // El menú desplegable de Android toma el tema del sistema: oscuro en modo
+  // oscuro. Un color de texto fijo (azul oscuro) quedaba ilegible ahí, así que
+  // las opciones van en blanco sobre el menú oscuro y oscuras sobre el claro.
+  const menuOscuro = useColorScheme() === "dark";
+  const colorOpcion = menuOscuro ? "#FFFFFF" : brand.textPrimary;
+  const colorPlaceholder = menuOscuro ? "#C6D4E3" : "#9AA3AF";
+
   return (
     <View style={styles.field}>
       <FieldLabel>{label}</FieldLabel>
@@ -85,9 +92,9 @@ export function SelectField({
           style={{ color: brand.textPrimary }}
           dropdownIconColor={brand.navy}
         >
-          <Picker.Item label={placeholder} value="" color="#9AA3AF" />
+          <Picker.Item label={placeholder} value="" color={colorPlaceholder} />
           {items.map((it) => (
-            <Picker.Item key={String(it.value)} label={it.label} value={it.value} color={brand.textPrimary} />
+            <Picker.Item key={String(it.value)} label={it.label} value={it.value} color={colorOpcion} />
           ))}
         </Picker>
       </View>

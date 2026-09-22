@@ -4,6 +4,8 @@ import { hasAlgunPermiso } from "../../utils/permisos";
 
 interface SidebarProps {
   user: User;
+  open: boolean;
+  onClose: () => void;
 }
 
 type NavItem = {
@@ -93,49 +95,78 @@ function getNavItemsForRole(user: User): NavItem[] {
   return items;
 }
 
-export function Sidebar({ user }: SidebarProps) {
+export function Sidebar({ user, open, onClose }: SidebarProps) {
   const items = getNavItemsForRole(user);
   const location = useLocation();
   const navigate = useNavigate();
 
   return (
-    <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-emerald-950/20 bg-sidebar text-emerald-50 shadow-2xl shadow-emerald-950/10">
-      <div className="flex h-16 items-center px-5">
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-300 via-emerald-400 to-teal-500 shadow-lg shadow-emerald-900/20" />
-        <div className="ml-3">
-          <p className="text-xs uppercase tracking-wide text-emerald-200/80">Cointra</p>
-          <p className="text-sm font-semibold text-white">Refrigerados</p>
+    <>
+      {/* Fondo oscurecido detrás del panel, solo en mobile mientras está abierto */}
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-950/50 md:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-emerald-950/20 bg-sidebar text-emerald-50 shadow-2xl shadow-emerald-950/10 transition-transform duration-200 ease-out md:translate-x-0 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex h-16 items-center justify-between px-5">
+          <div className="flex items-center">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-300 via-emerald-400 to-teal-500 shadow-lg shadow-emerald-900/20" />
+            <div className="ml-3">
+              <p className="text-xs uppercase tracking-wide text-emerald-200/80">Cointra</p>
+              <p className="text-sm font-semibold text-white">Refrigerados</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar menú"
+            className="rounded-lg p-1.5 text-emerald-100/80 hover:bg-emerald-900/45 hover:text-white md:hidden"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-      </div>
-      <nav className="mt-4 flex-1 space-y-1 px-3 text-sm">
-        {items.map((item) => {
-          const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => navigate(item.path)}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                active
-                  ? "bg-emerald-800/80 text-white shadow-sm"
-                  : "text-emerald-50/85 hover:bg-emerald-900/45 hover:text-white"
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  active ? "bg-emerald-300" : "bg-emerald-200/50"
+        <nav className="mt-4 flex-1 space-y-1 overflow-y-auto px-3 text-sm">
+          {items.map((item) => {
+            const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => {
+                  navigate(item.path);
+                  onClose();
+                }}
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                  active
+                    ? "bg-emerald-800/80 text-white shadow-sm"
+                    : "text-emerald-50/85 hover:bg-emerald-900/45 hover:text-white"
                 }`}
-              />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-      <div className="border-t border-emerald-950/20 px-4 py-4 text-xs text-emerald-100/60">
-        <p className="font-medium text-emerald-50">{user.nombre}</p>
-        <p>Rol: {user.rol}</p>
-      </div>
-    </aside>
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    active ? "bg-emerald-300" : "bg-emerald-200/50"
+                  }`}
+                />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="border-t border-emerald-950/20 px-4 py-4 text-xs text-emerald-100/60">
+          <p className="font-medium text-emerald-50">{user.nombre}</p>
+          <p>Rol: {user.rol}</p>
+        </div>
+      </aside>
+    </>
   );
 }
 

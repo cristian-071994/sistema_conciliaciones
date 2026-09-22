@@ -111,6 +111,32 @@ def _calculate_horas_hasta_corte(hora_inicio: time, corte: time = time(6, 0)) ->
     return round(total_minutes / 60, 2)
 
 
+def _horas_hora_extra_desde_valor(db: Session, servicio: Servicio | None, placa: str, valor_tercero: float) -> float | None:
+    """En la carga masiva el Excel trae el valor total pagado por Hora Extra,
+    no la cantidad de horas. Las reconstruye dividiendo ese valor entre la
+    tarifa por hora parametrizada en el Catálogo de Tarifas para el tipo de
+    vehículo de la placa cargada. Si no hay tarifa parametrizada para ese
+    tipo de vehículo, la fila se carga igual que hoy — simplemente sin
+    cantidad de horas calculada (no bloquea la carga)."""
+    if not _is_hora_extra(servicio) or not placa:
+        return None
+    vehiculo = db.query(Vehiculo).filter(Vehiculo.placa == placa, Vehiculo.activo.is_(True)).first()
+    if not vehiculo:
+        return None
+    tarifa_catalogo = (
+        db.query(CatalogoTarifa)
+        .filter(
+            CatalogoTarifa.servicio_id == servicio.id,
+            CatalogoTarifa.tipo_vehiculo_id == vehiculo.tipo_vehiculo_id,
+            CatalogoTarifa.activo.is_(True),
+        )
+        .first()
+    )
+    if not tarifa_catalogo or not tarifa_catalogo.tarifa_tercero:
+        return None
+    return round(valor_tercero / float(tarifa_catalogo.tarifa_tercero), 2)
+
+
 @router.post("", response_model=ViajeOut)
 def create_viaje(
     payload: ViajeCreate,
@@ -1021,6 +1047,7 @@ async def bulk_upload_viajes(
                 seen_manifiestos_upload.add(manifiesto)
 
             tarifa_cliente, rentabilidad = calculate_tarifa_cliente(tarifa_num, operacion)
+            horas_cantidad = _horas_hora_extra_desde_valor(db, servicio, placa, tarifa_num)
 
             viaje = Viaje(
                 operacion_id=operacion_id,
@@ -1031,6 +1058,7 @@ async def bulk_upload_viajes(
                 origen=origen,
                 destino=destino,
                 placa=placa,
+                horas_cantidad=horas_cantidad,
                 conductor=conductor or None,
                 tarifa_tercero=round(tarifa_num, 2),
                 tarifa_cliente=round(float(tarifa_cliente), 2),

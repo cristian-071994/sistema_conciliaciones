@@ -735,6 +735,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Fecha viaje</th>
                   <th className="border-b border-border px-3 py-2 text-left">Solicitud</th>
                   {(isCointra || isTercero) && <th className="border-b border-border px-3 py-2 text-left">Cliente</th>}
+                  <th className="border-b border-border px-3 py-2 text-left">Solicitado por</th>
                   <th className="border-b border-border px-3 py-2 text-left">Operación</th>
                   <th className="border-b border-border px-3 py-2 text-left">Origen → Destino</th>
                   <th className="border-b border-border px-3 py-2 text-left">Vehículo</th>
@@ -751,6 +752,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
                     <td className="px-3 py-2">{s.fecha_viaje}</td>
                     <td className="px-3 py-2">{s.titulo}</td>
                     {(isCointra || isTercero) && <td className="px-3 py-2">{s.cliente_nombre}</td>}
+                    <td className="px-3 py-2">{s.creador_nombre}</td>
                     <td className="px-3 py-2">{s.operacion_nombre}</td>
                     <td className="px-3 py-2">{s.origen} → {s.destino}</td>
                     <td className="px-3 py-2">{s.vehiculo_placa} ({s.vehiculo_tipo_nombre})</td>
