@@ -595,7 +595,7 @@ export function DashboardHomePage({ user }: Props) {
     const chartW = width - leftPad - rightPad;
     const chartH = height - topPad - bottomPad;
     const slot = chartW / prepared.length;
-    const barW = Math.max(20, slot * 0.5);
+    const barW = Math.max(14, Math.min(48, slot * 0.32));
     const line = prepared
       .map((row, idx) => {
         const cx = leftPad + idx * slot + slot / 2;
@@ -610,8 +610,7 @@ export function DashboardHomePage({ user }: Props) {
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
           <span>Barra: {metricLabel.toLowerCase()} | Línea: acumulado %</span>
         </div>
-        <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-[280px] w-full min-w-[700px] rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-sky-50/40">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-[280px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-sky-50/40">
           {Array.from({ length: 4 }).map((_, idx) => {
             const y = topPad + (idx / 3) * chartH;
             const moneyValue = maxGan * (1 - idx / 3);
@@ -655,7 +654,6 @@ export function DashboardHomePage({ user }: Props) {
             );
           })}
         </svg>
-        </div>
       </article>
     );
   }
@@ -690,7 +688,7 @@ export function DashboardHomePage({ user }: Props) {
     const maxGanancia = Math.max(...rows.map((row) => row.ganancia), 1);
     const maxServicios = Math.max(...rows.map((row) => row.servicios), 1);
     const slot = chartW / rows.length;
-    const barW = Math.max(20, slot * 0.46);
+    const barW = Math.max(14, Math.min(48, slot * 0.32));
 
     const linePoints = rows
       .map((row, idx) => {
@@ -714,8 +712,7 @@ export function DashboardHomePage({ user }: Props) {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full min-w-[760px] rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full rounded-xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40">
           {Array.from({ length: 4 }).map((_, idx) => {
             const y = topPad + (idx / 3) * chartH;
             const metricValue = maxGanancia * (1 - idx / 3);
@@ -790,7 +787,6 @@ export function DashboardHomePage({ user }: Props) {
             );
           })}
         </svg>
-        </div>
       </article>
     );
   }
