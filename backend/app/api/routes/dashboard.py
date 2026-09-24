@@ -233,19 +233,52 @@ def _summarize_viajes(viajes: list[Viaje]) -> dict:
     }
 
 
-def _build_time_series(viajes: list[Viaje], start: date, end: date) -> list[dict]:
+def _build_time_series(
+    viajes: list[Viaje],
+    start: date,
+    end: date,
+    servicios_por_id: dict[int, Servicio] | None = None,
+) -> list[dict]:
+    """Disponibilidad se factura por período (no por día), pero se carga con
+    una única fecha puntual — sumarla completa en esa fecha hace que un solo
+    día concentre el valor de todo el período y distorsione la tendencia.
+    Por eso su ingreso/costo se reparte en partes iguales entre todos los
+    puntos del período mostrado; el conteo de "servicios" sí se deja en su
+    fecha real, para no inflarlo multiplicándolo por cada punto."""
     use_daily = (end - start).days <= 70
     buckets: dict[str, dict[str, float]] = defaultdict(lambda: {"ingresos": 0.0, "costos": 0.0, "servicios": 0.0})
+    servicios_por_id = servicios_por_id or {}
 
-    for viaje in viajes:
+    def _bucket_key(viaje: Viaje) -> str:
         if use_daily:
-            key = viaje.fecha_servicio.isoformat()
-        else:
-            key = f"{viaje.fecha_servicio.year}-{viaje.fecha_servicio.month:02d}"
+            return viaje.fecha_servicio.isoformat()
+        return f"{viaje.fecha_servicio.year}-{viaje.fecha_servicio.month:02d}"
 
+    def _es_periodico(viaje: Viaje) -> bool:
+        servicio = servicios_por_id.get(viaje.servicio_id)
+        return str(getattr(servicio, "codigo", "") or "").upper() == "DISPONIBILIDAD"
+
+    normales = [v for v in viajes if not _es_periodico(v)]
+    periodicos = [v for v in viajes if _es_periodico(v)]
+
+    for viaje in normales:
+        key = _bucket_key(viaje)
         buckets[key]["ingresos"] += float(viaje.tarifa_cliente or 0)
         buckets[key]["costos"] += float(viaje.tarifa_tercero or 0)
         buckets[key]["servicios"] += 1
+
+    for viaje in periodicos:
+        buckets[_bucket_key(viaje)]["servicios"] += 1
+
+    if use_daily:
+        total_puntos = (end - start).days + 1
+    else:
+        total_puntos = (end.year - start.year) * 12 + (end.month - start.month) + 1
+    if periodicos and total_puntos > 0:
+        share_ingresos = sum(float(v.tarifa_cliente or 0) for v in periodicos) / total_puntos
+        share_costos = sum(float(v.tarifa_tercero or 0) for v in periodicos) / total_puntos
+    else:
+        share_ingresos = share_costos = 0.0
 
     if use_daily:
         cursor = start
@@ -253,13 +286,15 @@ def _build_time_series(viajes: list[Viaje], start: date, end: date) -> list[dict
         while cursor <= end:
             key = cursor.isoformat()
             row = buckets.get(key) or {"ingresos": 0.0, "costos": 0.0, "servicios": 0.0}
+            ingresos = float(row["ingresos"]) + share_ingresos
+            costos = float(row["costos"]) + share_costos
             result.append(
                 {
                     "label": f"{cursor.day:02d} {MESES_CORTOS_ES[cursor.month]}",
                     "date": key,
-                    "ingresos": round(float(row["ingresos"]), 2),
-                    "costos": round(float(row["costos"]), 2),
-                    "ganancia": round(float(row["ingresos"] - row["costos"]), 2),
+                    "ingresos": round(ingresos, 2),
+                    "costos": round(costos, 2),
+                    "ganancia": round(ingresos - costos, 2),
                     "servicios": int(row["servicios"]),
                 }
             )
@@ -272,13 +307,15 @@ def _build_time_series(viajes: list[Viaje], start: date, end: date) -> list[dict
     while current <= end_month:
         key = f"{current.year}-{current.month:02d}"
         row = buckets.get(key) or {"ingresos": 0.0, "costos": 0.0, "servicios": 0.0}
+        ingresos = float(row["ingresos"]) + share_ingresos
+        costos = float(row["costos"]) + share_costos
         result.append(
             {
                 "label": f"{MESES_CORTOS_ES[current.month]} {current.year}",
                 "date": key,
-                "ingresos": round(float(row["ingresos"]), 2),
-                "costos": round(float(row["costos"]), 2),
-                "ganancia": round(float(row["ingresos"] - row["costos"]), 2),
+                "ingresos": round(ingresos, 2),
+                "costos": round(costos, 2),
+                "ganancia": round(ingresos - costos, 2),
                 "servicios": int(row["servicios"]),
             }
         )
@@ -789,7 +826,7 @@ def dashboard_indicadores(
                 for key, value in sorted(conteo_servicios_tipo.items(), key=lambda row: row[0])
             ],
             "costo_por_tipo": costo_por_tipo,
-            "serie": _build_time_series(viajes, start, end),
+            "serie": _build_time_series(viajes, start, end, servicios_por_id),
             "top_operaciones": top_operaciones[:8],
             "top_placas": top_placas[:8],
             "top_clientes": top_clientes[:8],
