@@ -416,6 +416,13 @@ export interface ManifiestoViajeAdicional {
   created_at: string;
 }
 
+export interface PaginaSolicitudesViajeAdicional {
+  items: SolicitudViajeAdicional[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface SolicitudViajeAdicional {
   id: number;
   operacion_id: number;

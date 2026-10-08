@@ -22,7 +22,7 @@
 - /api/auth
 - /api/catalogs
 - /api/viajes
-- /api/viajes-adicionales
+- /api/viajes-adicionales (GET `/paginado?page&page_size=20` para la web, máx. 100 por página, devuelve `{items,total,page,page_size}`; GET sin paginar se conserva para la app móvil)
 - /api/conciliaciones
 - /api/dashboard
 - /api/avansat

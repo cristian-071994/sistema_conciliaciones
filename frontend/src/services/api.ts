@@ -1,4 +1,4 @@
-import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, PaginaSolicitudesViajeAdicional, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -774,6 +774,11 @@ export const api = {
     if (params?.fecha_hasta) search.set("fecha_hasta", params.fecha_hasta);
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return request<SolicitudViajeAdicional[]>(`/viajes-adicionales${suffix}`);
+  },
+  solicitudesViajeAdicionalPaginado: (params: { page: number; page_size: number; sin_manifiesto?: boolean }) => {
+    const search = new URLSearchParams({ page: String(params.page), page_size: String(params.page_size) });
+    if (params.sin_manifiesto) search.set("sin_manifiesto", "true");
+    return request<PaginaSolicitudesViajeAdicional>(`/viajes-adicionales/paginado?${search.toString()}`);
   },
   actualizarEstadoSolicitudViajeAdicional: (
     id: number,

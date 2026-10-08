@@ -7,6 +7,8 @@ interface Props {
   user: User;
 }
 
+const PAGE_SIZE = 20;
+
 function toSpanishError(error: unknown): string {
   const message = (error as Error)?.message || "";
   return message || "Ocurrio un error inesperado";
@@ -687,12 +689,27 @@ export function ViajesAdicionalesPage({ user }: Props) {
   // Cointra y Tercero ven el listado completo (igual que el Cliente); este
   // filtro opcional deja solo lo que aún no tiene manifiesto.
   const [soloSinManifiesto, setSoloSinManifiesto] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  async function loadData() {
+  async function loadData(targetPage = page) {
     setLoading(true);
     setError("");
     try {
-      setSolicitudes(await api.solicitudesViajeAdicional({ sin_manifiesto: soloSinManifiesto || undefined }));
+      const result = await api.solicitudesViajeAdicionalPaginado({
+        page: targetPage,
+        page_size: PAGE_SIZE,
+        sin_manifiesto: soloSinManifiesto || undefined,
+      });
+      // Si la última página quedó vacía (p.ej. por filtros), retrocede a la última válida.
+      const ultima = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
+      if (targetPage > ultima) {
+        setPage(ultima);
+        return;
+      }
+      setSolicitudes(result.items);
+      setTotal(result.total);
     } catch (e) {
       setError(toSpanishError(e));
     } finally {
@@ -700,18 +717,16 @@ export function ViajesAdicionalesPage({ user }: Props) {
     }
   }
 
-  // Actualiza la fila en memoria sin recargar toda la lista: el backend deja
-  // de devolver la solicitud en el próximo fetch una vez tiene manifiesto
-  // (ya se gestionó y pasa al listado de Viajes), pero mientras Cointra sigue
-  // en esta pantalla debe seguir viendo el número para poder corregirlo.
+  // Actualiza la fila en memoria sin recargar toda la lista: así Cointra sigue
+  // viendo el número de manifiesto recién cargado para poder corregirlo.
   function updateSolicitud(updated: SolicitudViajeAdicional) {
     setSolicitudes((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   }
 
   useEffect(() => {
-    void loadData();
+    void loadData(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soloSinManifiesto]);
+  }, [soloSinManifiesto, page]);
 
   if (!isCliente && !isCointra && !isTercero) {
     return (
@@ -723,7 +738,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
 
   return (
     <div className="space-y-6">
-      {isCliente && <ClienteForm onCreated={() => void loadData()} />}
+      {isCliente && <ClienteForm onCreated={() => { setPage(1); void loadData(1); }} />}
 
       <section className="rounded-2xl border border-border bg-white/90 p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -735,7 +750,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
               <input
                 type="checkbox"
                 checked={soloSinManifiesto}
-                onChange={(e) => setSoloSinManifiesto(e.target.checked)}
+                onChange={(e) => { setSoloSinManifiesto(e.target.checked); setPage(1); }}
                 className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary"
               />
               Solo sin manifiesto
@@ -816,6 +831,32 @@ export function ViajesAdicionalesPage({ user }: Props) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {!loading && total > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral">
+            <span>
+              Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} de {total}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="rounded-lg border border-border bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <span>Página {page} de {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="rounded-lg border border-border bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Siguiente
+              </button>
+            </div>
           </div>
         )}
       </section>

@@ -207,6 +207,8 @@ BORRADOR → ENVIADA → EN_REVISION_CLIENTE → APROBADA → CERRADA
 7. **Si no hay manifiesto**, el viaje adicional resalta en rojo en todas las vistas.
 8. **Al convertirse en `Viaje`/`ConciliacionItem`** (`services/viaje_adicional_conversion.py`), sigue el flujo normal de conciliación.
 
+**Listado (`GET /viajes-adicionales/paginado`):** Cliente, Tercero y Cointra ven el mismo listado completo — incluidas las solicitudes que ya tienen manifiesto o ya están conciliadas — para poder auditar qué se montó y qué falta. La visibilidad por rol se filtra en la query (Cliente por `cliente_id`, Tercero por `operacion.tercero_id`, Cointra todo). Está **paginado en el backend** (`page`, `page_size` por defecto 20, máximo 100; respuesta `{items,total,page,page_size}`) y la web muestra 20 por página con filtro opcional "Solo sin manifiesto" (`sin_manifiesto=true`, resuelto en SQL para que el total sea correcto). `GET /viajes-adicionales` sin paginar se mantiene sin cambios porque lo usa la app móvil. Cointra solo puede editar/eliminar el manifiesto mientras el viaje no esté en una conciliación; después la web lo muestra en solo lectura.
+
 `EstadoGestionViajeAdicional` es un campo **computado** (no persistido) que resume dónde va la solicitud: `PENDIENTE_TARIFA → PENDIENTE_MANIFIESTO → SIN_CONCILIAR → EN_BORRADOR/EN_REVISION/APROBADA/CONCILIADO` — distinto del campo manual `estado` (`ItemEstado`).
 
 ---

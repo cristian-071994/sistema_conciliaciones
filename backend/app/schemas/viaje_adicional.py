@@ -81,6 +81,13 @@ class SolicitudViajeAdicionalOut(ORMModel):
     viaje_id: int | None = None
 
 
+class SolicitudViajeAdicionalPaginaOut(BaseModel):
+    items: list[SolicitudViajeAdicionalOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class SolicitudViajeAdicionalEstadoUpdate(BaseModel):
     estado: ItemEstado
 

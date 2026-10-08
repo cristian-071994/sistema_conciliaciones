@@ -24,6 +24,7 @@ from app.schemas.viaje_adicional import (
     SolicitudViajeAdicionalCreate,
     SolicitudViajeAdicionalEstadoUpdate,
     SolicitudViajeAdicionalOut,
+    SolicitudViajeAdicionalPaginaOut,
     SolicitudViajeAdicionalTarifaUpdate,
     VehiculoDisponibleOut,
 )
@@ -242,23 +243,18 @@ def crear_solicitud(
     return _serialize(_get_solicitud_or_404(db, solicitud.id), user.rol)
 
 
-@router.get("", response_model=list[SolicitudViajeAdicionalOut])
-def listar_solicitudes(
-    estado: ItemEstado | None = Query(default=None),
-    sin_manifiesto: bool | None = Query(default=None),
-    con_tarifa: bool | None = Query(
-        default=None,
-        description=(
-            "Filtra por si ya tiene tarifa_tercero puesta. Sin este parámetro se ven todas; "
-            "el frontend de Cointra por defecto pide con_tarifa=true (listas para manifiesto) "
-            "y el de Tercero con_tarifa=false (pendientes de poner tarifa)."
-        ),
-    ),
-    fecha_desde: date | None = Query(default=None),
-    fecha_hasta: date | None = Query(default=None),
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user),
+def _query_listado(
+    db: Session,
+    user: Usuario,
+    estado: ItemEstado | None,
+    sin_manifiesto: bool | None,
+    con_tarifa: bool | None,
+    fecha_desde: date | None,
+    fecha_hasta: date | None,
 ):
+    """Consulta base del listado, con el filtro de visibilidad por rol aplicado
+    en BD. COINTRA ve todas las solicitudes (incluidas las que ya tienen
+    manifiesto) para poder auditar qué se montó y qué falta."""
     query = _query_with_relations(db).filter(SolicitudViajeAdicional.activo.is_(True))
     if user.rol == UserRole.CLIENTE:
         query = query.filter(SolicitudViajeAdicional.cliente_id == user.cliente_id)
@@ -266,9 +262,6 @@ def listar_solicitudes(
         query = query.join(Operacion, Operacion.id == SolicitudViajeAdicional.operacion_id).filter(
             Operacion.tercero_id == user.tercero_id
         )
-    # COINTRA ve todas las solicitudes (incluidas las que ya tienen manifiesto)
-    # para poder auditar qué se montó y qué falta; el filtro "sin_manifiesto"
-    # cubre la vista de cola pendiente.
 
     if estado is not None:
         query = query.filter(SolicitudViajeAdicional.estado == estado)
@@ -280,11 +273,54 @@ def listar_solicitudes(
         query = query.filter(SolicitudViajeAdicional.tarifa_tercero.isnot(None))
     elif con_tarifa is False:
         query = query.filter(SolicitudViajeAdicional.tarifa_tercero.is_(None))
-
-    solicitudes = query.order_by(SolicitudViajeAdicional.created_at.desc()).all()
     if sin_manifiesto:
-        solicitudes = [s for s in solicitudes if s.manifiesto is None]
-    return [_serialize(s, user.rol) for s in solicitudes]
+        # En SQL (no en Python) para que el conteo y la paginación sean correctos.
+        query = query.filter(~SolicitudViajeAdicional.manifiesto.has())
+    return query
+
+
+_ORDEN_LISTADO = (SolicitudViajeAdicional.created_at.desc(), SolicitudViajeAdicional.id.desc())
+
+
+@router.get("", response_model=list[SolicitudViajeAdicionalOut])
+def listar_solicitudes(
+    estado: ItemEstado | None = Query(default=None),
+    sin_manifiesto: bool | None = Query(default=None),
+    con_tarifa: bool | None = Query(
+        default=None,
+        description="Filtra por si ya tiene tarifa_tercero puesta. Sin este parámetro se ven todas.",
+    ),
+    fecha_desde: date | None = Query(default=None),
+    fecha_hasta: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    # Sin paginar: la usa la app móvil. La web usa /paginado.
+    query = _query_listado(db, user, estado, sin_manifiesto, con_tarifa, fecha_desde, fecha_hasta)
+    return [_serialize(s, user.rol) for s in query.order_by(*_ORDEN_LISTADO).all()]
+
+
+@router.get("/paginado", response_model=SolicitudViajeAdicionalPaginaOut)
+def listar_solicitudes_paginado(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    estado: ItemEstado | None = Query(default=None),
+    sin_manifiesto: bool | None = Query(default=None),
+    con_tarifa: bool | None = Query(default=None),
+    fecha_desde: date | None = Query(default=None),
+    fecha_hasta: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    query = _query_listado(db, user, estado, sin_manifiesto, con_tarifa, fecha_desde, fecha_hasta)
+    total = query.order_by(None).count()
+    solicitudes = query.order_by(*_ORDEN_LISTADO).offset((page - 1) * page_size).limit(page_size).all()
+    return SolicitudViajeAdicionalPaginaOut(
+        items=[_serialize(s, user.rol) for s in solicitudes],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/{solicitud_id}", response_model=SolicitudViajeAdicionalOut)

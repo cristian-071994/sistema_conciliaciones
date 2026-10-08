@@ -29,7 +29,7 @@
 - /terceros
 - /usuarios
 - /roles
-- /viajes-adicionales
+- /viajes-adicionales (listado completo para Cliente, Tercero y Cointra, paginado de 20 en 20; filtro opcional "Solo sin manifiesto")
 - /cambiar-password
 
 Las rutas /avansat, /servicios, /catalogo-tarifas, /usuarios y /roles están gateadas por permiso administrativo (componente `RequirePermiso` en App.tsx), no por rol fijo — ver sección de permisos en CLAUDE.md.
