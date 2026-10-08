@@ -266,11 +266,9 @@ def listar_solicitudes(
         query = query.join(Operacion, Operacion.id == SolicitudViajeAdicional.operacion_id).filter(
             Operacion.tercero_id == user.tercero_id
         )
-    elif user.rol == UserRole.COINTRA:
-        # El módulo es una cola de gestión: una vez se adjunta el manifiesto
-        # (viaje_id queda lleno) el registro ya se maneja desde el listado de
-        # Viajes / conciliaciones — no debe seguir apareciendo aquí.
-        query = query.filter(SolicitudViajeAdicional.viaje_id.is_(None))
+    # COINTRA ve todas las solicitudes (incluidas las que ya tienen manifiesto)
+    # para poder auditar qué se montó y qué falta; el filtro "sin_manifiesto"
+    # cubre la vista de cola pendiente.
 
     if estado is not None:
         query = query.filter(SolicitudViajeAdicional.estado == estado)

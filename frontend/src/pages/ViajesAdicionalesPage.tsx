@@ -444,6 +444,27 @@ function ManifiestoManager({
     return <span className="text-xs font-medium text-warning">Falta que el tercero ingrese la tarifa</span>;
   }
 
+  // Ya incluida en una conciliación: el backend bloquea editar el manifiesto
+  // desde este módulo (se corrige desde Conciliaciones), así que solo se consulta.
+  const yaConciliada = !["PENDIENTE_TARIFA", "PENDIENTE_MANIFIESTO", "SIN_CONCILIAR"].includes(solicitud.estado_gestion);
+  if (yaConciliada) {
+    return solicitud.manifiesto ? (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <EstadoCargaDot cargado={true} />
+        <span className="text-xs font-semibold text-emerald-700">{solicitud.manifiesto.numero_manifiesto}</span>
+        <button
+          type="button"
+          onClick={() => onView(solicitud.id)}
+          className="rounded-full border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Ver
+        </button>
+      </div>
+    ) : (
+      <span className="text-xs font-medium text-danger">Sin manifiesto</span>
+    );
+  }
+
   async function subir() {
     const numeroLimpio = numero.trim();
     if (!numeroLimpio) return setError("El número de manifiesto es obligatorio");
@@ -663,16 +684,15 @@ export function ViajesAdicionalesPage({ user }: Props) {
   const isCliente = user.rol === "CLIENTE";
   const isCointra = user.rol === "COINTRA";
   const isTercero = user.rol === "TERCERO";
-  // Cointra por defecto solo ve las que ya tienen tarifa (listas para
-  // manifiesto); Tercero por defecto solo ve las que le faltan por tarifar.
-  const [soloListasParaMi, setSoloListasParaMi] = useState(true);
+  // Cointra y Tercero ven el listado completo (igual que el Cliente); este
+  // filtro opcional deja solo lo que aún no tiene manifiesto.
+  const [soloSinManifiesto, setSoloSinManifiesto] = useState(false);
 
   async function loadData() {
     setLoading(true);
     setError("");
     try {
-      const conTarifa = isCointra ? soloListasParaMi : isTercero ? !soloListasParaMi : undefined;
-      setSolicitudes(await api.solicitudesViajeAdicional({ con_tarifa: conTarifa }));
+      setSolicitudes(await api.solicitudesViajeAdicional({ sin_manifiesto: soloSinManifiesto || undefined }));
     } catch (e) {
       setError(toSpanishError(e));
     } finally {
@@ -691,7 +711,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
   useEffect(() => {
     void loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soloListasParaMi]);
+  }, [soloSinManifiesto]);
 
   if (!isCliente && !isCointra && !isTercero) {
     return (
@@ -714,11 +734,11 @@ export function ViajesAdicionalesPage({ user }: Props) {
             <label className="flex items-center gap-2 text-xs text-neutral">
               <input
                 type="checkbox"
-                checked={soloListasParaMi}
-                onChange={(e) => setSoloListasParaMi(e.target.checked)}
+                checked={soloSinManifiesto}
+                onChange={(e) => setSoloSinManifiesto(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary"
               />
-              {isCointra ? "Solo con tarifa (listas para manifiesto)" : "Solo pendientes de tarifa"}
+              Solo sin manifiesto
             </label>
           )}
         </div>
