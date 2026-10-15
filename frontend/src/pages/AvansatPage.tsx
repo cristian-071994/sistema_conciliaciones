@@ -103,7 +103,7 @@ export function AvansatPage({ user }: Props) {
     try {
       const result = await api.syncAvansatMesAnterior();
       setSyncMessage(
-        `Sincronizacion completada (${result.start_date} a ${result.end_date}). Recibidos: ${result.total}, nuevos: ${result.inserted}, ya existentes: ${result.skipped}.`
+        `Sincronizacion completada (${result.start_date} a ${result.end_date}). Recibidos: ${result.total}, nuevos: ${result.inserted}, actualizados: ${result.updated}, sin cambios: ${result.skipped}.`
       );
       await loadCache(1);
     } catch (e) {
@@ -120,7 +120,7 @@ export function AvansatPage({ user }: Props) {
     try {
       const result = await api.syncAvansatAyerHoy();
       setSyncMessage(
-        `Sincronizacion completada (${result.start_date} a ${result.end_date}). Recibidos: ${result.total}, nuevos: ${result.inserted}, ya existentes: ${result.skipped}.`
+        `Sincronizacion completada (${result.start_date} a ${result.end_date}). Recibidos: ${result.total}, nuevos: ${result.inserted}, actualizados: ${result.updated}, sin cambios: ${result.skipped}.`
       );
       await loadCache(1);
     } catch (e) {

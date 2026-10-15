@@ -311,7 +311,7 @@ backend/app/
     rate_limit.py             # Rate limiting de intentos de login
     notifications.py          # Email (smtplib) + notificaciones internas
     avansat.py                # Cliente HTTP Avansat — solo verificación y Excel
-    avansat_cache.py          # sync_avansat_yesterday_today()
+    avansat_cache.py          # upsert de manifiestos_avansat: sync_avansat_recent_window(), save_avansat_payload()
     audit.py                  # Registro en historial_cambios
   core/
     config.py                 # Settings (pydantic-settings, carga .env)
@@ -360,7 +360,7 @@ mobile/                          # React Native + Expo SDK 57 — solo CLIENTE, 
 En `startup_event()` (`app/main.py`):
 1. Valida que exista la tabla `usuarios` — lanza `RuntimeError` si no hay migraciones
 2. Ejecuta `seed_data()` — crea admin por defecto y siembra roles/permisos si no existen (idempotente; ver `permisos_catalog.py`)
-3. Si `AVANSAT_ENABLED=true`, arranca hilo daemon que llama `sync_avansat_yesterday_today()` cada 1800 s
+3. Si `AVANSAT_ENABLED=true`, arranca hilo daemon que llama `sync_avansat_recent_window()` cada 1800 s: consulta Avansat por fecha de creación de los últimos 10 días (`RECENT_WINDOW_DAYS`) y hace **upsert** en `manifiestos_avansat` — agrega los nuevos y actualiza los existentes (así `fecha_cumplida` se completa cuando Avansat la reporta). Toda consulta a la API (sync manual, consulta puntual) pasa por ese upsert; el Excel de conciliaciones solo lee esa tabla, nunca consulta la API.
 
 ---
 

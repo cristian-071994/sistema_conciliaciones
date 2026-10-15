@@ -11,7 +11,7 @@ from app.db.seed import seed_data
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F403
 from app.models.manifiesto_avansat import ManifiestoAvansat
-from app.services.avansat_cache import sync_avansat_yesterday_today
+from app.services.avansat_cache import sync_avansat_recent_window
 
 app = FastAPI(title=settings.app_name)
 _avansat_sync_stop_event = threading.Event()
@@ -75,7 +75,7 @@ def startup_event():
             while not _avansat_sync_stop_event.is_set():
                 loop_db = SessionLocal()
                 try:
-                    sync_avansat_yesterday_today(loop_db)
+                    sync_avansat_recent_window(loop_db)
                 except Exception:
                     # Evita tumbar el backend si Avansat falla temporalmente.
                     pass

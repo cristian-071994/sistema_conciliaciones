@@ -46,34 +46,86 @@ def _cache_row_to_payload(row: ManifiestoAvansat) -> dict:
     }
 
 
-def _insert_if_missing_manifiesto(db: Session, manifiesto: str, payload: dict) -> bool:
+_PAYLOAD_TEXT_FIELDS = (
+    "fecha_emision",
+    "placa_vehiculo",
+    "trayler",
+    "remesa",
+    "producto",
+    "ciudad_origen",
+    "ciudad_destino",
+    "fecha_cumplida",
+)
+
+# Ventana móvil (por fecha de creación del manifiesto) que consulta la
+# sincronización automática. Un manifiesto se crea hoy y Avansat lo reporta
+# como cumplido días después; releer solo "ayer y hoy" nunca capturaría esa
+# fecha. 10 días cubre el ciclo de cumplido habitual en una sola llamada.
+RECENT_WINDOW_DAYS = 10
+
+
+def _clean_text(value: object) -> str | None:
+    return str(value or "").strip() or None
+
+
+def _apply_payload(row: ManifiestoAvansat, payload: dict) -> bool:
+    """Copia al row los valores no vacíos del payload y dice si algo cambió.
+    Un valor vacío de Avansat nunca borra uno ya guardado (p. ej. la
+    fecha_cumplida de un manifiesto que Avansat todavía no reporta)."""
+    changed = False
+    for field in _PAYLOAD_TEXT_FIELDS:
+        new_value = _clean_text(payload.get(field))
+        if new_value is not None and getattr(row, field) != new_value:
+            setattr(row, field, new_value)
+            changed = True
+
+    remesas = payload.get("remesas")
+    if isinstance(remesas, list) and remesas:
+        new_json = json.dumps(remesas, ensure_ascii=True)
+        if row.remesas_json != new_json:
+            row.remesas_json = new_json
+            changed = True
+    return changed
+
+
+def _upsert_manifiesto(
+    db: Session,
+    manifiesto: str,
+    payload: dict,
+    existing_row: ManifiestoAvansat | None = None,
+) -> str:
+    """Inserta el manifiesto si no existe o actualiza el existente.
+    Devuelve 'inserted', 'updated', 'unchanged' o 'skipped' (dato inválido)."""
     normalized = _normalize_manifiesto(manifiesto)
     if not normalized or not payload:
-        return False
+        return "skipped"
 
-    row = (
-        db.query(ManifiestoAvansat)
-        .filter(ManifiestoAvansat.manifiesto_numero == normalized)
-        .first()
-    )
-    if row is not None:
-        return False
+    row = existing_row
+    if row is None:
+        row = (
+            db.query(ManifiestoAvansat)
+            .filter(ManifiestoAvansat.manifiesto_numero == normalized)
+            .first()
+        )
 
-    row = ManifiestoAvansat(manifiesto_numero=normalized)
-    db.add(row)
+    if row is None:
+        row = ManifiestoAvansat(manifiesto_numero=normalized, created_at=datetime.utcnow())
+        _apply_payload(row, payload)
+        if row.remesas_json is None:
+            row.remesas_json = "[]"
+        db.add(row)
+        return "inserted"
 
-    row.fecha_emision = str(payload.get("fecha_emision") or "").strip() or None
-    row.placa_vehiculo = str(payload.get("placa_vehiculo") or "").strip() or None
-    row.trayler = str(payload.get("trayler") or "").strip() or None
-    row.remesa = str(payload.get("remesa") or "").strip() or None
-    row.producto = str(payload.get("producto") or "").strip() or None
-    row.ciudad_origen = str(payload.get("ciudad_origen") or "").strip() or None
-    row.ciudad_destino = str(payload.get("ciudad_destino") or "").strip() or None
-    row.fecha_cumplida = str(payload.get("fecha_cumplida") or "").strip() or None
-    remesas = payload.get("remesas")
-    row.remesas_json = json.dumps(remesas if isinstance(remesas, list) else [], ensure_ascii=True)
-    row.created_at = datetime.utcnow()
-    return True
+    return "updated" if _apply_payload(row, payload) else "unchanged"
+
+
+def save_avansat_payload(db: Session, manifiesto: str, payload: dict) -> str:
+    """Guarda en la tabla de manifiestos lo que devolvió una consulta puntual
+    a la API de Avansat, para que el Excel lo lea sin volver a consultarla."""
+    _ensure_cache_table(db)
+    outcome = _upsert_manifiesto(db, manifiesto, payload)
+    db.commit()
+    return outcome
 
 
 def resolve_avansat_for_manifiestos(
@@ -114,7 +166,7 @@ def resolve_avansat_for_manifiestos(
         data = fetched.get(manifiesto) or {}
         if data:
             resolved[manifiesto] = data
-            _insert_if_missing_manifiesto(db, manifiesto, data)
+            _upsert_manifiesto(db, manifiesto, data, cache_by_manifiesto.get(manifiesto))
 
     db.commit()
     missing = [manifiesto for manifiesto in unique_manifiestos if not resolved.get(manifiesto)]
@@ -168,76 +220,66 @@ def yesterday_today_window() -> tuple[date, date]:
     return yesterday, today
 
 
-def sync_avansat_range_insert_only(
+def recent_window(days: int = RECENT_WINDOW_DAYS) -> tuple[date, date]:
+    today = date.today()
+    return today - timedelta(days=days - 1), today
+
+
+def sync_avansat_range(
     db: Session,
     start_date: date,
     end_date: date,
 ) -> dict[str, int | str]:
+    """Consulta Avansat por fecha de creación y hace upsert en la tabla de
+    manifiestos: agrega los nuevos y actualiza los ya existentes (así se
+    completa fecha_cumplida cuando Avansat la reporta)."""
     _ensure_cache_table(db)
 
-    fetched_by_date = fetch_avansat_by_created_date_range(start_date, end_date)
-    if not fetched_by_date:
-        return {
-            "total": 0,
-            "inserted": 0,
-            "skipped": 0,
-            "start_date": min(start_date, end_date).isoformat(),
-            "end_date": max(start_date, end_date).isoformat(),
-        }
+    range_start = min(start_date, end_date)
+    range_end = max(start_date, end_date)
+    fetched_by_manifiesto = fetch_avansat_by_created_date_range(range_start, range_end)
+    summary: dict[str, int | str] = {
+        "total": len(fetched_by_manifiesto),
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "start_date": range_start.isoformat(),
+        "end_date": range_end.isoformat(),
+    }
+    if not fetched_by_manifiesto:
+        return summary
 
-    manifests = list(fetched_by_date.keys())
+    normalized_numbers = list(
+        {_normalize_manifiesto(number) for number in fetched_by_manifiesto if _normalize_manifiesto(number)}
+    )
     existing_rows = (
-        db.query(ManifiestoAvansat.manifiesto_numero)
-        .filter(ManifiestoAvansat.manifiesto_numero.in_(manifests))
+        db.query(ManifiestoAvansat)
+        .filter(ManifiestoAvansat.manifiesto_numero.in_(normalized_numbers))
         .all()
     )
-    existing = {str(row[0]).strip() for row in existing_rows if str(row[0]).strip()}
+    existing_by_number = {row.manifiesto_numero: row for row in existing_rows}
 
-    inserted = 0
-    skipped = 0
-    for manifiesto, payload in fetched_by_date.items():
+    for manifiesto, payload in fetched_by_manifiesto.items():
         normalized = _normalize_manifiesto(manifiesto)
-        if not normalized or not payload:
-            continue
-        if normalized in existing:
-            skipped += 1
-            continue
-        if _insert_if_missing_manifiesto(db, normalized, payload):
-            inserted += 1
-            existing.add(normalized)
-        else:
-            skipped += 1
+        outcome = _upsert_manifiesto(db, normalized, payload, existing_by_number.get(normalized))
+        # "unchanged" y "skipped" se reportan juntos: ya estaba al día o no era válido.
+        summary_key = outcome if outcome in ("inserted", "updated") else "skipped"
+        summary[summary_key] = int(summary[summary_key]) + 1
 
     db.commit()
-    return {
-        "total": len(fetched_by_date),
-        "inserted": inserted,
-        "skipped": skipped,
-        "start_date": min(start_date, end_date).isoformat(),
-        "end_date": max(start_date, end_date).isoformat(),
-    }
+    return summary
 
 
 def sync_avansat_previous_month_to_today(db: Session) -> dict[str, int | str]:
     start_date, end_date = previous_month_to_today_window()
-    return sync_avansat_range_insert_only(db, start_date, end_date)
+    return sync_avansat_range(db, start_date, end_date)
 
 
 def sync_avansat_yesterday_today(db: Session) -> dict[str, int | str]:
     start_date, end_date = yesterday_today_window()
-    return sync_avansat_range_insert_only(db, start_date, end_date)
+    return sync_avansat_range(db, start_date, end_date)
 
 
-def sync_recent_manifiestos_to_cache(
-    db: Session,
-    days_back: int = 60,
-    max_age_minutes: int = 30,
-) -> dict[str, int]:
-    _ = (days_back, max_age_minutes)
-    range_start, range_end = yesterday_today_window()
-    result = sync_avansat_range_insert_only(db, range_start, range_end)
-    return {
-        "total": int(result["total"]),
-        "resolved": int(result["inserted"]),
-        "missing": int(result["skipped"]),
-    }
+def sync_avansat_recent_window(db: Session) -> dict[str, int | str]:
+    start_date, end_date = recent_window()
+    return sync_avansat_range(db, start_date, end_date)

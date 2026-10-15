@@ -313,6 +313,7 @@ export interface AvansatCacheStats {
 export interface AvansatSyncResult {
   total: number;
   inserted: number;
+  updated: number;
   skipped: number;
   start_date: string;
   end_date: string;

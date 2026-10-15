@@ -11,7 +11,11 @@ from app.models.conciliacion_manifiesto import ConciliacionManifiesto
 from app.models.manifiesto_avansat import ManifiestoAvansat
 from app.models.usuario import Usuario
 from app.services.avansat import fetch_avansat_by_manifiesto
-from app.services.avansat_cache import sync_avansat_previous_month_to_today, sync_avansat_yesterday_today
+from app.services.avansat_cache import (
+    save_avansat_payload,
+    sync_avansat_previous_month_to_today,
+    sync_avansat_yesterday_today,
+)
 
 router = APIRouter(prefix="/avansat", tags=["avansat"])
 
@@ -26,11 +30,13 @@ class AvansatLookupOut(BaseModel):
     remesa: str | None = None
     ciudad_origen: str | None = None
     ciudad_destino: str | None = None
+    fecha_cumplida: str | None = None
 
 
 class AvansatSyncOut(BaseModel):
     total: int
     inserted: int
+    updated: int = 0
     skipped: int
     start_date: str
     end_date: str
@@ -66,6 +72,7 @@ class AvansatCacheListOut(BaseModel):
 @router.get("/manifiesto/{manifiesto}", response_model=AvansatLookupOut)
 def consultar_manifiesto(
     manifiesto: str,
+    db: Session = Depends(get_db),
     user: Usuario = Depends(require_permission("avansat.consultar")),
 ):
     value = manifiesto.strip()
@@ -79,6 +86,9 @@ def consultar_manifiesto(
         )
 
     data = fetch_avansat_by_manifiesto(value)
+    if data:
+        # Toda consulta a la API deja el resultado en la tabla de manifiestos.
+        save_avansat_payload(db, value, data)
     return AvansatLookupOut(manifiesto=value, encontrado=bool(data), **data)
 
 
