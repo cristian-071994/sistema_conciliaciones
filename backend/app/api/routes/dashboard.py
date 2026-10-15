@@ -327,6 +327,38 @@ def _build_time_series(
     return result
 
 
+# Estados que piden acción: se cuentan como foto de HOY, sin importar el
+# período elegido en el dashboard. APROBADA y FACTURADA, en cambio, se
+# acumulan para siempre, así que solo cuentan si la conciliación cierra
+# (fecha_fin) dentro del período.
+_BUCKETS_CONC_ACTUALES = {"BORRADOR", "EN_REVISION", "DEVUELTA", "ENVIADA_FACTURAR"}
+
+
+def _bucket_conciliacion(conc: Conciliacion, devolucion_ids: set[int]) -> str:
+    estado = _enum_text(conc.estado).upper()
+
+    if conc.enviada_facturacion:
+        return "FACTURADA" if bool(getattr(conc, "factura_cliente_enviada", False)) else "ENVIADA_FACTURAR"
+    # "Devuelta" refleja el estado ACTUAL, no que alguna vez se haya
+    # devuelto: al devolver, el backend deja la conciliacion en BORRADOR
+    # (ver devolver_conciliacion_cliente) y ese historial_cambio nunca se
+    # borra. Si Cointra ya la corrigio y reenvio (paso a EN_REVISION o
+    # mas adelante), ya no debe seguir contando aqui.
+    if estado == "BORRADOR" and conc.id in devolucion_ids:
+        return "DEVUELTA"
+    if estado == "EN_REVISION":
+        return "EN_REVISION"
+    if estado in {"APROBADA", "CERRADA"}:
+        return "APROBADA"
+    return "BORRADOR"
+
+
+def _cuenta_conciliacion_en_dashboard(bucket: str, conc: Conciliacion, start: date, end: date) -> bool:
+    if bucket in _BUCKETS_CONC_ACTUALES:
+        return True
+    return start <= conc.fecha_fin <= end
+
+
 def _estado_visible_viaje(viaje: Viaje) -> str:
     estado = str(viaje.estado_conciliacion or "").strip().upper()
     if viaje.conciliado or estado in {"APROBADA", "CERRADA"}:
@@ -483,11 +515,6 @@ def dashboard_indicadores(
     else:
         items_rows = []
 
-    # Conciliaciones del período = las que tienen ítems en el período
-    conc_ids_set: set[int] = {row[0].conciliacion_id for row in items_rows}
-    conc_ids = list(conc_ids_set)
-    concs = [c for c in all_active_concs if c.id in conc_ids_set]
-
     viajes_query = _aplicar_visibilidad_viajes_cliente(
         db.query(Viaje).filter(
             Viaje.operacion_id.in_(operacion_ids),
@@ -515,50 +542,34 @@ def dashboard_indicadores(
 
     items_summary = _summarize_items(items_rows)
 
+    visible_conc_ids = set(cliente_visible_conc_ids)
+    visible_concs = [c for c in all_active_concs if c.id in visible_conc_ids]
+
     devolucion_ids: set[int] = set()
-    if conc_ids:
+    if visible_conc_ids:
         devolucion_ids = {
             row[0]
             for row in db.query(HistorialCambio.conciliacion_id)
             .filter(
-                HistorialCambio.conciliacion_id.in_(conc_ids),
+                HistorialCambio.conciliacion_id.in_(visible_conc_ids),
                 HistorialCambio.campo == "devolucion_cliente",
                 HistorialCambio.conciliacion_id.is_not(None),
             )
             .all()
         }
 
-    conc_borrador = 0
-    conc_en_revision = 0
-    conc_aprobada = 0
-    conc_devuelta = 0
-    conc_enviada_facturar = 0
-    conc_facturada = 0
-    for conc in concs:
-        estado = _enum_text(conc.estado).upper()
+    conc_counts: dict[str, int] = defaultdict(int)
+    for conc in visible_concs:
+        bucket = _bucket_conciliacion(conc, devolucion_ids)
+        if _cuenta_conciliacion_en_dashboard(bucket, conc, start, end):
+            conc_counts[bucket] += 1
 
-        if conc.enviada_facturacion:
-            if bool(getattr(conc, "factura_cliente_enviada", False)):
-                conc_facturada += 1
-            else:
-                conc_enviada_facturar += 1
-            continue
-        # "Devuelta" refleja el estado ACTUAL, no que alguna vez se haya
-        # devuelto: al devolver, el backend deja la conciliacion en BORRADOR
-        # (ver devolver_conciliacion_cliente) y ese historial_cambio nunca se
-        # borra. Si Cointra ya la corrigio y reenvio (paso a EN_REVISION o
-        # mas adelante), ya no debe seguir contando aqui.
-        if estado == "BORRADOR" and conc.id in devolucion_ids:
-            conc_devuelta += 1
-            continue
-
-        if estado == "EN_REVISION":
-            conc_en_revision += 1
-            continue
-        if estado in {"APROBADA", "CERRADA"}:
-            conc_aprobada += 1
-            continue
-        conc_borrador += 1
+    conc_borrador = conc_counts["BORRADOR"]
+    conc_en_revision = conc_counts["EN_REVISION"]
+    conc_aprobada = conc_counts["APROBADA"]
+    conc_devuelta = conc_counts["DEVUELTA"]
+    conc_enviada_facturar = conc_counts["ENVIADA_FACTURAR"]
+    conc_facturada = conc_counts["FACTURADA"]
 
     conc_estado_counts = {
         "BORRADOR": conc_borrador,

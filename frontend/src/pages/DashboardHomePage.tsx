@@ -534,6 +534,9 @@ export function DashboardHomePage({ user }: Props) {
     return (
       <article className="rounded-2xl border border-border bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900">Embudo de estado de conciliaciones</h3>
+        <p className="mt-1 text-[11px] text-neutral">
+          Pendientes: al día de hoy. Aprobadas y facturadas: con cierre en el período.
+        </p>
         <div className="mt-3 space-y-2.5">
           {steps.map((step) => (
             <div key={step.label}>
@@ -972,7 +975,7 @@ export function DashboardHomePage({ user }: Props) {
                 <StatCard
                   title="Conciliaciones"
                   value={String(data.kpis.conciliaciones)}
-                  hint="Total del período"
+                  hint="Pendientes de hoy + cierres del período"
                   highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
                 />
                 <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" onClick={() => setDrillDown({ type: "manifiestos", title: "Servicios con manifiesto" })} />
@@ -997,7 +1000,7 @@ export function DashboardHomePage({ user }: Props) {
                 <StatCard
                   title="Conciliaciones"
                   value={String(data.kpis.conciliaciones)}
-                  hint="Total del período"
+                  hint="Pendientes de hoy + cierres del período"
                   highlightBadge={`Aprobación ${oneDecimal(data.kpis.aprobacion_items_pct)}%`}
                 />
                 <StatCard title="Manifiestos" value={String(data.kpis.manifiestos)} hint="Asociados al período" onClick={() => setDrillDown({ type: "manifiestos", title: "Servicios con manifiesto" })} />
@@ -1011,11 +1014,11 @@ export function DashboardHomePage({ user }: Props) {
 
           <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {isCointra && <StatCard title="Servicios conciliados" value={String(data.kpis.viajes_conciliados)} onClick={() => setDrillDown({ type: "conciliados", title: "Servicios conciliados" })} />}
-            <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Creadas en el período" tone="borrador" onClick={goToConciliacionesList} />
-            <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Creadas en el período" tone="revision" onClick={goToConciliacionesList} />
-            <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Creadas en el período" tone="aprobada" onClick={goToConciliacionesList} />
-            <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Con marca de facturación" tone="facturar" onClick={goToConciliacionesList} />
-            <StatCard title="Facturadas" value={String(data.kpis.conc_facturada)} hint="Factura enviada al cliente" tone="facturada" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones borrador" value={String(data.kpis.conc_borrador)} hint="Al día de hoy" tone="borrador" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones en revisión" value={String(data.kpis.conc_en_revision)} hint="Al día de hoy" tone="revision" onClick={goToConciliacionesList} />
+            <StatCard title="Conciliaciones aprobadas" value={String(data.kpis.conc_aprobada)} hint="Con cierre en el período" tone="aprobada" onClick={goToConciliacionesList} />
+            <StatCard title="Enviadas a facturar" value={String(data.kpis.conc_enviada_facturar)} hint="Al día de hoy, con marca de facturación" tone="facturar" onClick={goToConciliacionesList} />
+            <StatCard title="Facturadas" value={String(data.kpis.conc_facturada)} hint="Factura enviada, con cierre en el período" tone="facturada" onClick={goToConciliacionesList} />
           </section>
 
           <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">

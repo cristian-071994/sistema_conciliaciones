@@ -290,7 +290,7 @@ backend/app/
     roles.py                       # Roles y permisos administrativos configurables
     presence.py                    # Heartbeat y usuarios en línea
     avansat.py                     # Consulta y sincronización de cache Avansat
-    dashboard.py                   # KPIs y métricas diferenciadas por rol (>800 líneas — vigilar)
+    dashboard.py                   # KPIs y métricas diferenciadas por rol (>800 líneas — vigilar). Tarjetas de conciliaciones: Borrador/En revisión/Devuelta/Enviadas a facturar = foto de HOY (ignoran el período); Aprobadas/Facturadas = con `fecha_fin` dentro del período
     notificaciones.py              # Inbox interno + envío manual de correo
   models/
     enums.py                 # UserRole, CointraSubRol, ConciliacionEstado, ItemTipo, ItemEstado
