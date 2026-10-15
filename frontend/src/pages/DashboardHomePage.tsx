@@ -800,8 +800,9 @@ export function DashboardHomePage({ user }: Props) {
     const viajesVal = (row: DashboardPlacaDesglose) => useCliente ? row.viajes_cliente : row.viajes;
     const dispVal = (row: DashboardPlacaDesglose) => useCliente ? row.disponibilidad_cliente : row.disponibilidad;
     const totalVal = (row: DashboardPlacaDesglose) => useCliente ? row.total_cliente : row.total;
-    const maxTotal = Math.max(...rows.map(totalVal), 1);
-    const hint = useCliente ? "Tarifa cliente · ordenado por mayor total" : "Costo tercero · ordenado por mayor total";
+    const hint = useCliente
+      ? "Tarifa cliente · ordenado por mayor total · cada barra es el 100% de su placa"
+      : "Costo tercero · ordenado por mayor total · cada barra es el 100% de su placa";
     return (
       <article className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
         <div className="border-b border-border px-5 py-3">
@@ -837,8 +838,8 @@ export function DashboardHomePage({ user }: Props) {
                         className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100"
                         title={`Viajes ${viajesPct}% · Disponibilidad ${dispPct}%`}
                       >
-                        <div className="h-full bg-sky-400" style={{ width: `${(v / maxTotal) * 100}%` }} />
-                        <div className="h-full bg-violet-400" style={{ width: `${(d / maxTotal) * 100}%` }} />
+                        <div className="h-full bg-sky-400" style={{ width: `${t > 0 ? (v / t) * 100 : 0}%` }} />
+                        <div className="h-full bg-violet-400" style={{ width: `${t > 0 ? (d / t) * 100 : 0}%` }} />
                       </div>
                       <div className="mt-1 flex gap-2 text-[10px]">
                         {viajesPct > 0 && <span className="text-sky-600">{viajesPct}% V</span>}
