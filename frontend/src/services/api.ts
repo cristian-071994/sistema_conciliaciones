@@ -827,6 +827,8 @@ export const api = {
     request<SolicitudViajeAdicional>(`/viajes-adicionales/${id}/manifiesto`, {
       method: "DELETE",
     }),
+  eliminarSolicitudViajeAdicional: (id: number) =>
+    request<{ ok: boolean }>(`/viajes-adicionales/${id}`, { method: "DELETE" }),
   verManifiestoViajeAdicional: async (id: number): Promise<Blob> => {
     const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     const headers: Record<string, string> = {};

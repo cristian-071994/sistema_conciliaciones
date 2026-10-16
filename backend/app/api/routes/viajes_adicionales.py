@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_cointra_admin
 from app.core.upload_limits import MANIFIESTO_VIAJE_ADICIONAL_MAX_BYTES
 from app.db.session import get_db
 from app.models.catalogo_tarifa import CatalogoTarifa
@@ -30,6 +30,7 @@ from app.schemas.viaje_adicional import (
 )
 from app.services.pricing import calculate_tarifa_cliente_default
 from app.services.viaje_adicional_conversion import VIAJE_ADICIONAL_SERVICIO_CODIGO, convertir_en_viaje
+from app.services.viaje_adicional_eliminacion import SolicitudNoEliminable, eliminar_solicitud_viaje_adicional
 from app.services.visibility import sanitize_item_for_role
 from .conciliaciones_helpers import _validate_user_access_operacion
 from .viajes import _ensure_viaje_mutable
@@ -519,6 +520,28 @@ def eliminar_manifiesto(
 
     db.commit()
     return _serialize(_get_solicitud_or_404(db, solicitud_id), user.rol)
+
+
+@router.delete("/{solicitud_id}")
+def eliminar_solicitud(
+    solicitud_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Elimina definitivamente la solicitud (con su manifiesto y el viaje que
+    generó). Solo el super admin de Cointra; bloqueado si el viaje ya está en
+    una conciliación."""
+    if not is_cointra_admin(user):
+        raise HTTPException(status_code=403, detail="Solo el super admin de Cointra puede eliminar solicitudes")
+
+    solicitud = _get_solicitud_or_404(db, solicitud_id)
+    try:
+        eliminar_solicitud_viaje_adicional(db, solicitud, user.id)
+    except SolicitudNoEliminable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/{solicitud_id}/manifiesto")

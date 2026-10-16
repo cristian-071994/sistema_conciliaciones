@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ActionModal } from "../components/common/ActionModal";
 import { api } from "../services/api";
 import { formatCOP } from "../utils/formatters";
 import type { Operacion, RutaTarifa, SolicitudViajeAdicional, User, VehiculoDisponible } from "../types";
@@ -686,6 +687,9 @@ export function ViajesAdicionalesPage({ user }: Props) {
   const isCliente = user.rol === "CLIENTE";
   const isCointra = user.rol === "COINTRA";
   const isTercero = user.rol === "TERCERO";
+  // Solo es presentación: el backend vuelve a verificar que sea el super admin.
+  const isSuperAdmin = isCointra && user.sub_rol === "COINTRA_ADMIN";
+  const [aEliminar, setAEliminar] = useState<SolicitudViajeAdicional | null>(null);
   // Cointra y Tercero ven el listado completo (igual que el Cliente); este
   // filtro opcional deja solo lo que aún no tiene manifiesto.
   const [soloSinManifiesto, setSoloSinManifiesto] = useState(false);
@@ -721,6 +725,19 @@ export function ViajesAdicionalesPage({ user }: Props) {
   // viendo el número de manifiesto recién cargado para poder corregirlo.
   function updateSolicitud(updated: SolicitudViajeAdicional) {
     setSolicitudes((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+  }
+
+  async function confirmarEliminacion() {
+    if (!aEliminar) return;
+    const id = aEliminar.id;
+    setAEliminar(null);
+    setError("");
+    try {
+      await api.eliminarSolicitudViajeAdicional(id);
+      await loadData();
+    } catch (e) {
+      setError(toSpanishError(e));
+    }
   }
 
   useEffect(() => {
@@ -779,6 +796,7 @@ export function ViajesAdicionalesPage({ user }: Props) {
                   {(isCointra || isTercero) && <th className="border-b border-border px-3 py-2 text-left">Tarifa tercero</th>}
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
                   <th className="border-b border-border px-3 py-2 text-left">Manifiesto</th>
+                  {isSuperAdmin && <th className="border-b border-border px-3 py-2 text-left">Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -827,6 +845,17 @@ export function ViajesAdicionalesPage({ user }: Props) {
                         <span className="text-xs font-medium text-danger">Sin manifiesto</span>
                       )}
                     </td>
+                    {isSuperAdmin && (
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setAEliminar(s)}
+                          className="rounded-full border border-danger/40 bg-danger/10 px-2.5 py-1 text-xs font-semibold text-danger hover:bg-danger/20"
+                        >
+                          Eliminar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -860,6 +889,20 @@ export function ViajesAdicionalesPage({ user }: Props) {
           </div>
         )}
       </section>
+
+      <ActionModal
+        open={aEliminar !== null}
+        title="Eliminar solicitud de viaje adicional"
+        description={
+          aEliminar
+            ? `Vas a eliminar "${aEliminar.titulo}" (${aEliminar.fecha_viaje}, ${aEliminar.vehiculo_placa}, solicitada por ${aEliminar.creador_nombre}). Se borra también su manifiesto y el viaje que generó. Esta acción no se puede deshacer.`
+            : undefined
+        }
+        confirmText="Sí, eliminar"
+        confirmTone="danger"
+        onConfirm={confirmarEliminacion}
+        onClose={() => setAEliminar(null)}
+      />
     </div>
   );
 }
