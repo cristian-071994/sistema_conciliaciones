@@ -1,4 +1,4 @@
-import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, PaginaSolicitudesViajeAdicional, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DashboardPlacaDetalle, DashboardPlacaGrupo, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, PaginaSolicitudesViajeAdicional, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -652,6 +652,19 @@ export const api = {
     if (typeof params?.month === "number") search.set("month", String(params.month));
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return request<DashboardIndicators>(`/dashboard/indicadores${suffix}`);
+  },
+  dashboardPlacaDetalle: (params: {
+    placa: string;
+    grupo: DashboardPlacaGrupo;
+    mode?: "current_month" | "year_to_date" | "month_year";
+    year?: number;
+    month?: number;
+  }) => {
+    const search = new URLSearchParams({ placa: params.placa, grupo: params.grupo });
+    if (params.mode) search.set("mode", params.mode);
+    if (typeof params.year === "number") search.set("year", String(params.year));
+    if (typeof params.month === "number") search.set("month", String(params.month));
+    return request<DashboardPlacaDetalle>(`/dashboard/placa-detalle?${search.toString()}`);
   },
   servicios: () => request<Servicio[]>("/servicios"),
   crearServicio: (payload: { nombre: string; requiere_origen_destino?: boolean }) =>

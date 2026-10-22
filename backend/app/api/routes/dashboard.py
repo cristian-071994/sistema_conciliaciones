@@ -1,10 +1,9 @@
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
-import json
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -18,6 +17,7 @@ from app.models.servicio import Servicio
 from app.models.usuario import Usuario
 from app.models.usuario_operacion import usuario_operaciones_asignadas
 from app.models.viaje import Viaje
+from app.services.dashboard_placa import GRUPOS_VALIDOS, armar_placa_desglose, listar_detalle_placa
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 try:
@@ -359,49 +359,6 @@ def _cuenta_conciliacion_en_dashboard(bucket: str, conc: Conciliacion, start: da
     return start <= conc.fecha_fin <= end
 
 
-# Servicios que muestra la tabla "por placa" del dashboard y la clave de cada grupo.
-_GRUPOS_PLACA_DESGLOSE = {"VIAJE": "viajes", "VIAJE_ADICIONAL": "adicionales", "DISPONIBILIDAD": "disponibilidad"}
-
-
-def _armar_placa_desglose(desglose_rows) -> list[dict]:
-    """Agrupa por placa la cantidad y el valor de viajes, viajes adicionales y
-    disponibilidad. Los valores van en tarifa_tercero (TERCERO/COINTRA) y en
-    tarifa_cliente (sufijo _cliente); las cantidades son iguales para todos.
-    El resto de servicios (horas extra, descargues...) no entra en esta tabla."""
-    raw: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    for placa_raw, codigo_raw, tarifa_raw, tarifa_c_raw, tipo_raw, desc_raw in desglose_rows:
-        placa = str(placa_raw or "").strip().upper()
-        if not placa or placa in {"N/A", "N/D"}:
-            continue
-        if tipo_raw == ItemTipo.OTRO:
-            try:
-                if json.loads((desc_raw or "").strip()).get("kind") == "LIQUIDACION_CONTRATO_FIJO":
-                    continue
-            except Exception:
-                pass
-        grupo = _GRUPOS_PLACA_DESGLOSE.get(str(codigo_raw or "").strip().upper())
-        if grupo is None:
-            continue
-        raw[placa][grupo] += float(tarifa_raw or 0)
-        raw[placa][f"{grupo}_c"] += float(tarifa_c_raw or 0)
-        raw[placa][f"{grupo}_n"] += 1
-
-    grupos = list(_GRUPOS_PLACA_DESGLOSE.values())
-    rows = []
-    for placa, v in raw.items():
-        row = {"placa": placa}
-        for g in grupos:
-            row[g] = round(v[g], 2)
-            row[f"{g}_cliente"] = round(v[f"{g}_c"], 2)
-            row[f"{g}_cant"] = int(v[f"{g}_n"])
-        row["total"] = round(sum(v[g] for g in grupos), 2)
-        row["total_cliente"] = round(sum(v[f"{g}_c"] for g in grupos), 2)
-        row["total_cant"] = sum(row[f"{g}_cant"] for g in grupos)
-        if row["total"] > 0:
-            rows.append(row)
-    return sorted(rows, key=lambda r: r["total"], reverse=True)
-
-
 def _estado_visible_viaje(viaje: Viaje) -> str:
     estado = str(viaje.estado_conciliacion or "").strip().upper()
     if viaje.conciliado or estado in {"APROBADA", "CERRADA"}:
@@ -712,7 +669,7 @@ def dashboard_indicadores(
             )
             .all()
         )
-    placa_desglose = _armar_placa_desglose(desglose_rows)
+    placa_desglose = armar_placa_desglose(desglose_rows)
 
     top_clientes = []
     for nombre, values in cliente_totales.items():
@@ -855,3 +812,36 @@ def dashboard_indicadores(
     _sanitize_dashboard_payload_for_role(payload, user.rol)
 
     return payload
+
+
+@router.get("/placa-detalle")
+def dashboard_placa_detalle(
+    placa: str = Query(min_length=1, max_length=50),
+    grupo: str = Query(),
+    mode: str = Query(default="current_month"),
+    year: int | None = Query(default=None, ge=2020, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Detalle ítem por ítem de una celda de la tabla por placa del dashboard.
+    Usa el mismo período, el mismo alcance por rol y la misma regla de qué ítems
+    cuentan que /indicadores, para que el detalle sume exactamente el número
+    en el que se hizo clic."""
+    if grupo not in GRUPOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Categoría no válida.")
+    start, end, _ = _resolve_period(mode, year, month)
+    conciliaciones = (
+        db.query(Conciliacion.id, Conciliacion.estado)
+        .filter(Conciliacion.operacion_id.in_(_get_accessible_operacion_ids(db, user)), Conciliacion.activo.is_(True))
+        .all()
+    )
+    # El Cliente no ve conciliaciones en BORRADOR (mismo criterio que /indicadores).
+    visibles = [
+        cid for cid, estado in conciliaciones
+        if user.rol != UserRole.CLIENTE or _enum_text(estado).upper() != ConciliacionEstado.BORRADOR.value
+    ]
+    items = listar_detalle_placa(
+        db, conciliacion_ids=visibles, placa=placa, grupo=grupo, start=start, end=end, rol=user.rol,
+    )
+    return {"placa": placa.strip().upper(), "grupo": grupo, "items": items}

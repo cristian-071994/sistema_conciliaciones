@@ -384,6 +384,31 @@ export interface DashboardTopOperacionEntry extends DashboardTopEntry {
   operacion_id: number;
 }
 
+export type DashboardPlacaGrupo = "viajes" | "adicionales" | "disponibilidad" | "total";
+
+export interface DashboardPlacaDetalleItem {
+  item_id: number;
+  grupo: Exclude<DashboardPlacaGrupo, "total">;
+  servicio: string | null;
+  fecha_servicio: string;
+  origen: string | null;
+  destino: string | null;
+  conductor: string | null;
+  manifiesto_numero: string | null;
+  remesa: string | null;
+  conciliacion_id: number;
+  conciliacion_nombre: string;
+  conciliacion_estado: string;
+  tarifa_cliente: number | null;
+  tarifa_tercero: number | null;
+}
+
+export interface DashboardPlacaDetalle {
+  placa: string;
+  grupo: DashboardPlacaGrupo;
+  items: DashboardPlacaDetalleItem[];
+}
+
 export interface DashboardPlacaDesglose {
   placa: string;
   viajes: number;

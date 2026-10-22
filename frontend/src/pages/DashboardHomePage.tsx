@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { PlacaDesgloseTable } from "../components/dashboard/PlacaDesgloseTable";
+import { PlacaDetalleModal, type PlacaDetalleSeleccion } from "../components/dashboard/PlacaDetalleModal";
 import { api } from "../services/api";
-import type { DashboardCostoPorTipo, DashboardIndicators, DashboardLabelValue, DashboardPeriod, DashboardPlacaDesglose, User, Viaje } from "../types";
+import type { DashboardCostoPorTipo, DashboardIndicators, DashboardLabelValue, DashboardPeriod, User, Viaje } from "../types";
 import { formatCOP } from "../utils/formatters";
 
 interface Props {
@@ -19,6 +21,7 @@ export function DashboardHomePage({ user }: Props) {
   const [error, setError] = useState("");
   const [data, setData] = useState<DashboardIndicators | null>(null);
   const [drillDown, setDrillDown] = useState<{ type: string; title: string } | null>(null);
+  const [placaDetalle, setPlacaDetalle] = useState<PlacaDetalleSeleccion | null>(null);
 
   const yearOptions = useMemo(() => {
     const base = today.getFullYear();
@@ -794,92 +797,6 @@ export function DashboardHomePage({ user }: Props) {
     );
   }
 
-  function PlacaDesgloseTable({ rows }: { rows: DashboardPlacaDesglose[] }) {
-    if (rows.length === 0) return null;
-    const useCliente = isCliente;
-    // Cada grupo trae cantidad y valor; el Cliente ve tarifa_cliente y el resto tarifa_tercero.
-    const grupos = [
-      { label: "Viajes", tag: "V", texto: "text-sky-700", barra: "bg-sky-400", cant: (r: DashboardPlacaDesglose) => r.viajes_cant, valor: (r: DashboardPlacaDesglose) => (useCliente ? r.viajes_cliente : r.viajes) },
-      { label: "Viajes adicionales", tag: "A", texto: "text-amber-700", barra: "bg-amber-400", cant: (r: DashboardPlacaDesglose) => r.adicionales_cant, valor: (r: DashboardPlacaDesglose) => (useCliente ? r.adicionales_cliente : r.adicionales) },
-      { label: "Disponibilidad", tag: "D", texto: "text-violet-700", barra: "bg-violet-400", cant: (r: DashboardPlacaDesglose) => r.disponibilidad_cant, valor: (r: DashboardPlacaDesglose) => (useCliente ? r.disponibilidad_cliente : r.disponibilidad) },
-    ];
-    const totalVal = (row: DashboardPlacaDesglose) => (useCliente ? row.total_cliente : row.total);
-    const hint = useCliente
-      ? "Tarifa cliente · ordenado por mayor total · cada barra es el 100% de su placa"
-      : "Costo tercero · ordenado por mayor total · cada barra es el 100% de su placa";
-    const cantidad = (n: number) => (
-      <span className={n > 0 ? "text-slate-700" : "text-slate-300"}>{n}</span>
-    );
-    return (
-      <article className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
-        <div className="border-b border-border px-5 py-3">
-          <h3 className="text-sm font-bold text-slate-800">Viajes, viajes adicionales y disponibilidad por placa</h3>
-          <p className="mt-0.5 text-xs text-slate-500">{hint}</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full whitespace-nowrap text-xs">
-            <thead>
-              <tr className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                <th rowSpan={2} className="px-4 py-2 text-left align-bottom">Placa</th>
-                {grupos.map((g) => (
-                  <th key={g.label} colSpan={2} className={`px-4 pt-2 text-center ${g.texto}`}>{g.label}</th>
-                ))}
-                <th colSpan={2} className="px-4 pt-2 text-center text-slate-700">Total</th>
-                <th rowSpan={2} className="w-36 px-4 py-2 text-left align-bottom">Distribución</th>
-              </tr>
-              <tr className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                {[...grupos, null].map((g) => (
-                  <Fragment key={g?.label ?? "total"}>
-                    <th className="px-4 pb-2 text-right">Cant.</th>
-                    <th className="px-4 pb-2 text-right">Valor</th>
-                  </Fragment>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {rows.map((row) => {
-                const t = totalVal(row);
-                const valores = grupos.map((g) => g.valor(row));
-                const pcts = valores.map((v) => (t > 0 ? Math.round((v / t) * 100) : 0));
-                const titulo = grupos.map((g, i) => `${g.label} ${pcts[i]}%`).join(" · ");
-                return (
-                  <tr key={row.placa} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-2 font-semibold text-slate-800">{row.placa}</td>
-                    {grupos.map((g, i) => (
-                      <Fragment key={g.label}>
-                        <td className="px-4 py-2 text-right">{cantidad(g.cant(row))}</td>
-                        <td className={`px-4 py-2 text-right ${g.texto}`}>{formatCOP(valores[i])}</td>
-                      </Fragment>
-                    ))}
-                    <td className="px-4 py-2 text-right font-semibold text-slate-900">{row.total_cant}</td>
-                    <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCOP(t)}</td>
-                    <td className="px-4 py-2">
-                      <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100" title={titulo}>
-                        {grupos.map((g, i) => (
-                          <div key={g.label} className={`h-full ${g.barra}`} style={{ width: `${t > 0 ? (valores[i] / t) * 100 : 0}%` }} />
-                        ))}
-                      </div>
-                      <div className="mt-1 flex gap-2 text-[10px]">
-                        {grupos.map((g, i) => (valores[i] > 0 ? <span key={g.label} className={g.texto}>{pcts[i]}% {g.tag}</span> : null))}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex gap-4 border-t border-border px-5 py-2 text-[11px] text-slate-500">
-          {grupos.map((g) => (
-            <span key={g.label} className="flex items-center gap-1.5">
-              <span className={`inline-block h-2 w-3 rounded-sm ${g.barra}`} /> {g.label}
-            </span>
-          ))}
-        </div>
-      </article>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <section className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-900 p-6 text-white shadow-lg">
@@ -1099,10 +1016,26 @@ export function DashboardHomePage({ user }: Props) {
 
           {data.charts.placa_desglose.length > 0 && (
             <section>
-              <PlacaDesgloseTable rows={data.charts.placa_desglose} />
+              <PlacaDesgloseTable
+                rows={data.charts.placa_desglose}
+                isCliente={isCliente}
+                onSelect={(placa, grupo) => setPlacaDetalle({ placa, grupo })}
+              />
             </section>
           )}
         </>
+      )}
+      {placaDetalle && (
+        <PlacaDetalleModal
+          seleccion={placaDetalle}
+          periodo={{
+            mode,
+            year: mode === "month_year" || mode === "year_to_date" ? year : undefined,
+            month: mode === "month_year" ? month : undefined,
+          }}
+          useCliente={isCliente}
+          onClose={() => setPlacaDetalle(null)}
+        />
       )}
       {drillDown && data && (
         <KpiDrillDownModal
