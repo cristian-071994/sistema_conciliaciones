@@ -387,9 +387,15 @@ export interface DashboardTopOperacionEntry extends DashboardTopEntry {
 export interface DashboardPlacaDesglose {
   placa: string;
   viajes: number;
+  viajes_cant: number;
+  adicionales: number;
+  adicionales_cant: number;
   disponibilidad: number;
+  disponibilidad_cant: number;
   total: number;
+  total_cant: number;
   viajes_cliente: number;
+  adicionales_cliente: number;
   disponibilidad_cliente: number;
   total_cliente: number;
 }

@@ -359,6 +359,49 @@ def _cuenta_conciliacion_en_dashboard(bucket: str, conc: Conciliacion, start: da
     return start <= conc.fecha_fin <= end
 
 
+# Servicios que muestra la tabla "por placa" del dashboard y la clave de cada grupo.
+_GRUPOS_PLACA_DESGLOSE = {"VIAJE": "viajes", "VIAJE_ADICIONAL": "adicionales", "DISPONIBILIDAD": "disponibilidad"}
+
+
+def _armar_placa_desglose(desglose_rows) -> list[dict]:
+    """Agrupa por placa la cantidad y el valor de viajes, viajes adicionales y
+    disponibilidad. Los valores van en tarifa_tercero (TERCERO/COINTRA) y en
+    tarifa_cliente (sufijo _cliente); las cantidades son iguales para todos.
+    El resto de servicios (horas extra, descargues...) no entra en esta tabla."""
+    raw: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for placa_raw, codigo_raw, tarifa_raw, tarifa_c_raw, tipo_raw, desc_raw in desglose_rows:
+        placa = str(placa_raw or "").strip().upper()
+        if not placa or placa in {"N/A", "N/D"}:
+            continue
+        if tipo_raw == ItemTipo.OTRO:
+            try:
+                if json.loads((desc_raw or "").strip()).get("kind") == "LIQUIDACION_CONTRATO_FIJO":
+                    continue
+            except Exception:
+                pass
+        grupo = _GRUPOS_PLACA_DESGLOSE.get(str(codigo_raw or "").strip().upper())
+        if grupo is None:
+            continue
+        raw[placa][grupo] += float(tarifa_raw or 0)
+        raw[placa][f"{grupo}_c"] += float(tarifa_c_raw or 0)
+        raw[placa][f"{grupo}_n"] += 1
+
+    grupos = list(_GRUPOS_PLACA_DESGLOSE.values())
+    rows = []
+    for placa, v in raw.items():
+        row = {"placa": placa}
+        for g in grupos:
+            row[g] = round(v[g], 2)
+            row[f"{g}_cliente"] = round(v[f"{g}_c"], 2)
+            row[f"{g}_cant"] = int(v[f"{g}_n"])
+        row["total"] = round(sum(v[g] for g in grupos), 2)
+        row["total_cliente"] = round(sum(v[f"{g}_c"] for g in grupos), 2)
+        row["total_cant"] = sum(row[f"{g}_cant"] for g in grupos)
+        if row["total"] > 0:
+            rows.append(row)
+    return sorted(rows, key=lambda r: r["total"], reverse=True)
+
+
 def _estado_visible_viaje(viaje: Viaje) -> str:
     estado = str(viaje.estado_conciliacion or "").strip().upper()
     if viaje.conciliado or estado in {"APROBADA", "CERRADA"}:
@@ -441,6 +484,7 @@ def _sanitize_dashboard_payload_for_role(payload: dict, role: UserRole) -> None:
             row["ganancia"] = 0
         for row in charts["placa_desglose"]:
             row["viajes"] = 0
+            row["adicionales"] = 0
             row["disponibilidad"] = 0
             row["total"] = 0
     elif role == UserRole.TERCERO:
@@ -458,6 +502,7 @@ def _sanitize_dashboard_payload_for_role(payload: dict, role: UserRole) -> None:
             row["ganancia"] = 0
         for row in charts["placa_desglose"]:
             row["viajes_cliente"] = 0
+            row["adicionales_cliente"] = 0
             row["disponibilidad_cliente"] = 0
             row["total_cliente"] = 0
 
@@ -644,8 +689,8 @@ def dashboard_indicadores(
         )
     top_placas.sort(key=lambda row: row["ganancia"], reverse=True)
 
-    # Matriz viajes vs disponibilidad por placa (tarifa_tercero para TERCERO/COINTRA, tarifa_cliente para CLIENTE)
-    placa_desglose_raw: dict[str, dict[str, float]] = defaultdict(lambda: {"viajes": 0.0, "disponibilidad": 0.0, "viajes_c": 0.0, "disponibilidad_c": 0.0})
+    # Matriz por placa: viajes, viajes adicionales y disponibilidad (cantidad y valor)
+    desglose_rows = []
     if cliente_visible_conc_ids:
         desglose_rows = (
             db.query(
@@ -667,46 +712,7 @@ def dashboard_indicadores(
             )
             .all()
         )
-        for placa_raw, codigo_raw, tarifa_raw, tarifa_c_raw, tipo_raw, desc_raw in desglose_rows:
-            placa_str = str(placa_raw or "").strip().upper()
-            if not placa_str or placa_str in {"N/A", "N/D"}:
-                continue
-            if tipo_raw == ItemTipo.OTRO:
-                try:
-                    payload = json.loads((desc_raw or "").strip())
-                    if payload.get("kind") == "LIQUIDACION_CONTRATO_FIJO":
-                        continue
-                except Exception:
-                    pass
-            val = float(tarifa_raw or 0)
-            val_c = float(tarifa_c_raw or 0)
-            codigo_str = str(codigo_raw or "").strip().upper()
-            if codigo_str not in {"VIAJE", "DISPONIBILIDAD"}:
-                continue
-            if codigo_str == "DISPONIBILIDAD":
-                placa_desglose_raw[placa_str]["disponibilidad"] += val
-                placa_desglose_raw[placa_str]["disponibilidad_c"] += val_c
-            else:
-                placa_desglose_raw[placa_str]["viajes"] += val
-                placa_desglose_raw[placa_str]["viajes_c"] += val_c
-
-    placa_desglose = sorted(
-        [
-            {
-                "placa": placa,
-                "viajes": round(values["viajes"], 2),
-                "disponibilidad": round(values["disponibilidad"], 2),
-                "total": round(values["viajes"] + values["disponibilidad"], 2),
-                "viajes_cliente": round(values["viajes_c"], 2),
-                "disponibilidad_cliente": round(values["disponibilidad_c"], 2),
-                "total_cliente": round(values["viajes_c"] + values["disponibilidad_c"], 2),
-            }
-            for placa, values in placa_desglose_raw.items()
-            if values["viajes"] + values["disponibilidad"] > 0
-        ],
-        key=lambda row: row["total"],
-        reverse=True,
-    )
+    placa_desglose = _armar_placa_desglose(desglose_rows)
 
     top_clientes = []
     for nombre, values in cliente_totales.items():
