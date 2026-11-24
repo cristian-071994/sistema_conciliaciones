@@ -493,33 +493,25 @@ El super admin puede ver en tiempo real qué usuarios están conectados al siste
 
 ### Para la fase de despliegue en servidor (en orden de prioridad)
 
-0. **BLOQUEANTE — credenciales de producción embebidas en la imagen
-   Docker.** La imagen de producción actual (`docker-prod-v1.2` /
-   `docker-compose.prod.yml`), construida sin `backend/.dockerignore`,
-   muy probablemente contiene `backend/.env.prod` con credenciales
-   reales (Postgres, SMTP, Avansat, `SECRET_KEY`) embebidas en texto
-   plano dentro de la imagen — el `Dockerfile` hace `COPY . .` y hasta
-   el 2026-07-31 nada excluía esos archivos. Verificado empíricamente en
-   la imagen construida desde `conciliaciones_gateway` antes del fix:
-   `docker exec ... ls /app/` mostraba `.env` y `.env.prod` presentes;
-   son recuperables con un simple `docker run ... cat /app/.env.prod`
-   por cualquiera con acceso a la imagen.
-
-   **Esto NO se corrige solo con el `.dockerignore` de la rama
-   `feature/gateway-subpath`** (que sí evita que vuelva a ocurrir en
-   imágenes nuevas). Requiere, además:
-   - Reconstruir y redesplegar la imagen de producción con el
-     `.dockerignore` aplicado.
-   - **ROTAR todas las credenciales que pudieran haber quedado
-     expuestas** — especialmente `SECRET_KEY`: rotarla invalida todas
-     las sesiones firmadas con la clave vieja (todos los usuarios deben
-     volver a iniciar sesión), comportamiento esperado y correcto en
-     este caso, no un efecto secundario a evitar.
-
-   Bloqueante antes del corte real a producción vía el gateway. Va por
-   encima de `AVANSAT_VERIFY_SSL` en prioridad: aquí las credenciales ya
-   están expuestas de facto en un artefacto distribuible, no es un
-   riesgo latente.
+0. **Credenciales embebidas en imágenes Docker — RESUELTO en el servidor
+   (2026-11-24).** La imagen antigua `docker-prod-v1.2` / `sistema_conciliacion-backend`
+   se construyó sin `backend/.dockerignore` y el `Dockerfile` hace `COPY . .`, por lo que
+   `.env` y `.env.prod` (Postgres, SMTP, Avansat, `SECRET_KEY`) quedaron en texto plano
+   dentro de la imagen. Estado verificado el 2026-11-24:
+   - El `.dockerignore` (versionado en `main`) ya excluye `.env` y `.env.*` (deja
+     `.env.example`). Las imágenes de producción en el servidor (`refrigerados-backend`,
+     incluida la anterior `:pre-standby`) solo contienen `.env.example`.
+   - La imagen local antigua `sistema_conciliacion-backend:latest` (con `.env` y
+     `.env.prod`) se eliminó del equipo de desarrollo, junto con el contenedor
+     `conciliacion_backend_v12` que dependía de ella. Si se reconstruye, el
+     `.dockerignore` evita que vuelva a ocurrir.
+   - **Pendiente solo si esa imagen alguna vez salió del equipo** (subida a un registro,
+     `docker save`, copiada a otro servidor): rotar todas las credenciales, en
+     especial `SECRET_KEY` (invalida todas las sesiones; es lo esperado). Si nunca
+     salió del equipo, no hace falta.
+   - Regla: antes de publicar cualquier imagen, comprobar con
+     `docker run --rm --entrypoint sh <imagen> -c 'ls -a /app | grep ^.env'` que no
+     contiene `.env` ni `.env.prod`.
 
 1. **PRIORIDAD ALTA — `AVANSAT_VERIFY_SSL=false`** (`backend/.env`,
    `backend/.env.prod`, default en `app/core/config.py:34`): la
