@@ -144,7 +144,7 @@ El sistema maneja 6 tipos de servicio como `ConciliacionItem`:
 |------|---|---|---|
 | `VIAJE` | COINTRA (carga masiva) | No — valor libre | No |
 | `VIAJE_ADICIONAL` | CLIENTE (solicitud formal) | Sí — tarifario por ruta | **Sí — obligatorio, resalta rojo si falta** |
-| `HORA_EXTRA` | TERCERO | Sí — tarifa fija | No |
+| `STAND_BY` (antes `HORA_EXTRA`) | TERCERO | Sí — tarifa **por hora** por tipo de vehículo | No |
 | `CONDUCTOR_RELEVO` | TERCERO | No — valor libre | No |
 | `DESCARGUE` | TERCERO | No — valor libre | No |
 | `DISPONIBILIDAD` | TERCERO | No — valor libre | No |
@@ -193,6 +193,32 @@ BORRADOR → ENVIADA → EN_REVISION_CLIENTE → APROBADA → CERRADA
 - `APROBADA`: cliente y Cointra de acuerdo
 - `CERRADA`: archivada, proceso terminado
 - `ANULADA`: cancelada — los servicios regresan automáticamente a `PENDIENTE`; la conciliación queda como registro histórico de solo lectura
+
+---
+
+## Stand By (antes "Hora Extra")
+
+Servicio que cobra un tercero cuando el vehículo queda en espera. Se mide **desde una fecha+hora inicial hasta una fecha+hora final** (puede abarcar varios días) y se cobra **por hora**: `horas × tarifa por hora` del Catálogo de Tarifas según el tipo de vehículo (ej. 15/11/2026 10:00 p. m. → 18/11/2026 4:00 a. m. = 54 h).
+
+- **Lógica:** `backend/app/services/standby.py` (`calcular_horas_standby`, `parse_fecha_hora`, `resolver_standby_carga_masiva`, `aplicar_cambio_rango_standby`). Valida fin > inicio y un tope de 31 días. Fechas "naive" en hora de Colombia.
+- **BD:** `viajes.fecha_hora_inicio` / `fecha_hora_fin` (`DateTime`, nullable) + `horas_cantidad` calculada en el servidor. `hora_inicio`/`hora_fin` se conservan como la parte "hora" del rango (histórico). `fecha_servicio` = fecha de inicio. El servicio `HORA_EXTRA` se renombró a `STAND_BY` conservando su `id` (migración `f3a9c1d5b7e2`), así que tarifas e histórico siguen enlazados. En producción ya existía un "Stand By" aparte (id 11, tarifas inactivas, 1 viaje): la migración lo retira como `STAND_BY_ANTERIOR` / "Stand By (anterior)" (inactivo, sin borrar ni mover sus viajes) antes de renombrar Hora Extra (id 3). `ItemTipo.HORA_EXTRA` queda en el enum sin uso (evita migrar un enum de PostgreSQL).
+- **Carga masiva:** columnas opcionales `Fecha y Hora Inicio Stand By` / `Fecha y Hora Fin Stand By` (celda fecha-hora de Excel, `2026-11-15 22:00` o `15/11/2026 22:00`). Si `Tarifa Tercero` viene vacía se calcula con la tarifa por hora del catálogo; si viene, se toma como valor **total**. La plantilla se genera en `services/carga_masiva_plantilla.py`.
+- **Frontend:** `components/viajes/StandByCampos.tsx` (formulario + detalle). El resumen de horas/total en el formulario es solo informativo; el backend recalcula.
+- **Valor de la hora:** `ConciliacionItem.valor_hora_cliente/tercero` = total del ítem ÷ horas (`services/standby.py::valor_por_hora`), solo para Stand By; `sanitize_item_for_role()` oculta el que no le corresponde al rol. Se muestra en la plataforma (tabla de servicios cargados e ítems de la conciliación: horas, rango, valor hora y total) y en el Excel de conciliación (`api/routes/conciliaciones_excel_standby.py`: columnas `Horas Stand By`, `Valor Hora Cliente`, `Valor Hora Tercero`, junto a `Valor Cliente/Tercero` que es el total; solo aparecen si la sección tiene algún Stand By).
+- `esCodigoStandBy` / `es_standby` aceptan también `HORA_EXTRA` por si algún entorno aún no aplicó la migración.
+
+---
+
+## Adjuntos en servicios cargados (Descargue, Viáticos, etc.)
+
+Cada servicio cargado (`Viaje`) de un tipo de servicio con `servicios.permite_adjuntos = true` admite **hasta 3 archivos** (PDF, JPG, PNG o WEBP, máx. 10 MB c/u), **opcionales**. El flag se activa desde la pantalla Servicios (la migración `a7d2e9c4f1b8` lo deja activo para `DESCARGUE` y `VIATICOS`).
+
+- **BD:** tabla `servicio_adjuntos` (`viaje_id` con `ON DELETE CASCADE`, `filename`, `content_type`, `size_bytes`, `content` LargeBinary). Sin dependencias nuevas.
+- **Validación (backend, `services/adjuntos.py`):** tipo detectado por los primeros bytes del archivo (no por extensión ni `Content-Type`), máximo 3 por servicio (con bloqueo de fila contra subidas simultáneas), tamaño, nombre saneado. SVG/HTML no se aceptan. Límites en `core/upload_limits.py`.
+- **Endpoints (`api/routes/viaje_adjuntos.py`):** `GET/POST /viajes/{id}/adjuntos`, `GET/DELETE /viajes/{id}/adjuntos/{adjunto_id}`. Ven los archivos quienes ven el servicio (Cointra todo; Tercero los de su operación; Cliente solo desde que la conciliación llega a revisión). Suben/quitan el Tercero de la operación o Cointra con `viajes.crear`/`viajes.editar`, y solo mientras el servicio no esté en una conciliación avanzada (`_ensure_viaje_mutable`).
+- **Frontend:** `components/viajes/AdjuntosCampos.tsx` (selector del formulario y modal "Archivos (n)" en la tabla de servicios cargados).
+- **Vista:** tarjetas medianas con vista previa de fondo (PDF con el visor nativo del navegador en un `<iframe>` sin dependencias; imagen con `<img>`). También hay botón "Archivos (n)" en los ítems de la conciliación (`ConciliacionItemOut.adjuntos_count`, vía `column_property` en `Viaje` para evitar N+1).
+- **No cubre:** la carga masiva por Excel no puede llevar archivos; se adjuntan después desde la tabla. Una miniatura renderizada (pdf.js) quedó pendiente porque requiere la dependencia nueva `pdfjs-dist`.
 
 ---
 
@@ -248,7 +274,7 @@ PostgreSQL 16. Soft deletes via campo `activo`. IDs `int autoincrement`, timesta
 - `rol_permisos`: tabla intermedia many-to-many entre `roles` y `permisos`
 
 **Operativa:**
-- `conciliacion_items`: todos los tipos de servicio (viaje, viaje_adicional, hora_extra, etc.) con estado, item_tipo, tarifas, y campos específicos por tipo
+- `conciliacion_items`: todos los tipos de servicio (viaje, viaje_adicional, stand_by, etc.) con estado, item_tipo, tarifas, y campos específicos por tipo
 - `conciliaciones`: contenedor con estado, período, `enviada_facturacion`/`factura_cliente_enviada` (booleanos, no forman parte del enum de estado — ver nota abajo)
 - `viajes_adicionales_solicitud`: solicitud formal del cliente, tabla separada de `conciliacion_items` (decisión ya tomada, no pendiente) — se convierte en `Viaje`/`ConciliacionItem` vía `services/viaje_adicional_conversion.py` una vez tiene tarifa y manifiesto
 
@@ -380,7 +406,9 @@ Hoy solo existe exportación a Excel de conciliaciones (`conciliaciones_excel.py
 
 **BD:** IDs `int autoincrement`, timestamps `created_at`/`updated_at`, soft deletes con campo `activo`, campos opcionales como `nullable`.
 
-**Código de servicio:** generado en `backend/app/api/routes/servicios.py` función `_to_codigo()`. Convierte el nombre completo a mayúsculas ASCII y reemplaza caracteres no alfanuméricos por `_`. Ejemplo: `"Hora Extra"` → `"HORA_EXTRA"`. Unicidad validada por nombre Y código antes de insertar. **No son iniciales** — es el nombre completo normalizado.
+**Código de servicio:** generado en `backend/app/api/routes/servicios.py` función `_to_codigo()`. Convierte el nombre completo a mayúsculas ASCII y reemplaza caracteres no alfanuméricos por `_`. Ejemplo: `"Stand By"` → `"STAND_BY"`. Unicidad validada por nombre Y código antes de insertar. **No son iniciales** — es el nombre completo normalizado.
+
+> **Cuidado:** renombrar un servicio desde la pantalla Servicios regenera su `codigo`, y varias reglas del backend/frontend se disparan por código (`STAND_BY`, `VIAJE`, `CONDUCTOR_RELEVO`, `DISPONIBILIDAD`...). No renombrar esos servicios desde la UI sin migración.
 
 ---
 

@@ -40,7 +40,7 @@ def armar_placa_desglose(desglose_rows) -> list[dict]:
     """Agrupa por placa la cantidad y el valor de viajes, viajes adicionales y
     disponibilidad. Los valores van en tarifa_tercero (TERCERO/COINTRA) y en
     tarifa_cliente (sufijo _cliente); las cantidades son iguales para todos.
-    El resto de servicios (horas extra, descargues...) no entra en esta tabla."""
+    El resto de servicios (Stand By, descargues...) no entra en esta tabla."""
     raw: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for placa_raw, codigo_raw, tarifa_raw, tarifa_c_raw, tipo_raw, desc_raw in desglose_rows:
         placa = normalizar_placa(placa_raw)

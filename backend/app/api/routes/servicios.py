@@ -49,6 +49,7 @@ def create_servicio(
         nombre=nombre,
         codigo=codigo,
         requiere_origen_destino=payload.requiere_origen_destino,
+        permite_adjuntos=payload.permite_adjuntos,
         activo=True,
         created_by=user.id
     )
@@ -84,6 +85,9 @@ def update_servicio(
 
     if "requiere_origen_destino" in data and data["requiere_origen_destino"] is not None:
         servicio.requiere_origen_destino = bool(data["requiere_origen_destino"])
+
+    if "permite_adjuntos" in data and data["permite_adjuntos"] is not None:
+        servicio.permite_adjuntos = bool(data["permite_adjuntos"])
 
     db.commit()
     db.refresh(servicio)

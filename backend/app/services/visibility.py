@@ -8,7 +8,9 @@ def sanitize_item_for_role(item_dict: dict, role: UserRole) -> dict:
     if role == UserRole.CLIENTE:
         output["tarifa_tercero"] = None
         output["rentabilidad"] = None
+        output["valor_hora_tercero"] = None
         return output
     output["tarifa_cliente"] = None
     output["rentabilidad"] = None
+    output["valor_hora_cliente"] = None
     return output

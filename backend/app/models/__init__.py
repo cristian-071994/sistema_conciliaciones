@@ -12,6 +12,7 @@ from app.models.catalogo_tarifa import CatalogoTarifa
 from app.models.permiso import Permiso, rol_permisos
 from app.models.rol import Rol
 from app.models.servicio import Servicio
+from app.models.servicio_adjunto import ServicioAdjunto
 from app.models.tercero import Tercero
 from app.models.usuario import Usuario
 from app.models.viaje_adicional import SolicitudViajeAdicional
@@ -38,6 +39,7 @@ __all__ = [
     "usuario_operaciones_asignadas",
     "Vehiculo",
     "Servicio",
+    "ServicioAdjunto",
     "CatalogoTarifa",
     "AvansatCache",
     "ManifiestoAvansat",

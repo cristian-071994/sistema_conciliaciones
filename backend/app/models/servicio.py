@@ -13,6 +13,8 @@ class Servicio(Base):
     nombre: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
     codigo: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     requiere_origen_destino: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Permite adjuntar hasta 3 soportes (PDF/imagen) a cada servicio cargado de este tipo.
+    permite_adjuntos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

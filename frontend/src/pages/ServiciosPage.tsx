@@ -34,10 +34,16 @@ export function ServiciosPage({ user }: Props) {
   const [rows, setRows] = useState<Servicio[]>([]);
   const [nombre, setNombre] = useState("");
   const [requiereOrigenDestino, setRequiereOrigenDestino] = useState(false);
+  const [permiteAdjuntos, setPermiteAdjuntos] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<{ id: number; action: "inactivar" | "reactivar" } | null>(null);
-  const [editModal, setEditModal] = useState<{ id: number; nombre: string; requiere_origen_destino: boolean } | null>(null);
+  const [editModal, setEditModal] = useState<{
+    id: number;
+    nombre: string;
+    requiere_origen_destino: boolean;
+    permite_adjuntos: boolean;
+  } | null>(null);
 
   const puedeCrear = hasPermiso(user, "servicios.crear");
   const puedeEditar = hasPermiso(user, "servicios.editar");
@@ -68,9 +74,11 @@ export function ServiciosPage({ user }: Props) {
       await api.crearServicio({
         nombre: nombre.trim(),
         requiere_origen_destino: requiereOrigenDestino,
+        permite_adjuntos: permiteAdjuntos,
       });
       setNombre("");
       setRequiereOrigenDestino(false);
+      setPermiteAdjuntos(false);
       await loadData();
     } catch (e) {
       setError(toSpanishError(e));
@@ -84,6 +92,7 @@ export function ServiciosPage({ user }: Props) {
       await api.editarServicio(editModal.id, {
         nombre: editModal.nombre.trim(),
         requiere_origen_destino: editModal.requiere_origen_destino,
+        permite_adjuntos: editModal.permite_adjuntos,
       });
       setEditModal(null);
       await loadData();
@@ -123,7 +132,7 @@ export function ServiciosPage({ user }: Props) {
               required
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
-              placeholder="Ej. Hora extra"
+              placeholder="Ej. Stand By"
               className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
             />
             <button
@@ -147,6 +156,15 @@ export function ServiciosPage({ user }: Props) {
             />
             Este servicio requiere origen y destino en el formulario de viajes/adicionales.
           </label>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={permiteAdjuntos}
+              onChange={(e) => setPermiteAdjuntos(e.target.checked)}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            />
+            Permite adjuntar hasta 3 archivos (PDF o imagen) a cada servicio cargado.
+          </label>
         </form>
       </section>
       )}
@@ -164,6 +182,7 @@ export function ServiciosPage({ user }: Props) {
                   <th className="border-b border-border px-3 py-2 text-left">Nombre</th>
                   <th className="border-b border-border px-3 py-2 text-left">Codigo</th>
                   <th className="border-b border-border px-3 py-2 text-left">Requiere origen/destino</th>
+                  <th className="border-b border-border px-3 py-2 text-left">Adjuntos</th>
                   <th className="border-b border-border px-3 py-2 text-left">Estado</th>
                   {(puedeEditar || puedeDesactivar) && <th className="border-b border-border px-3 py-2 text-left">Accion</th>}
                 </tr>
@@ -175,6 +194,7 @@ export function ServiciosPage({ user }: Props) {
                     <td className="px-3 py-2">{row.nombre}</td>
                     <td className="px-3 py-2">{row.codigo}</td>
                     <td className="px-3 py-2">{row.requiere_origen_destino ? "Sí" : "No"}</td>
+                    <td className="px-3 py-2">{row.permite_adjuntos ? "Sí (hasta 3)" : "No"}</td>
                     <td className="px-3 py-2">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
@@ -195,6 +215,7 @@ export function ServiciosPage({ user }: Props) {
                                   id: row.id,
                                   nombre: row.nombre,
                                   requiere_origen_destino: row.requiere_origen_destino,
+                                  permite_adjuntos: row.permite_adjuntos ?? false,
                                 })
                               }
                               className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
@@ -253,6 +274,17 @@ export function ServiciosPage({ user }: Props) {
             className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
           />
           Este servicio requiere origen y destino en el formulario de viajes/adicionales.
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={editModal?.permite_adjuntos ?? false}
+            onChange={(e) =>
+              setEditModal((prev) => (prev ? { ...prev, permite_adjuntos: e.target.checked } : prev))
+            }
+            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+          />
+          Permite adjuntar hasta 3 archivos (PDF o imagen) a cada servicio cargado.
         </label>
       </ActionModal>
 

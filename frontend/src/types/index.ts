@@ -132,6 +132,13 @@ export interface Item {
   servicio_nombre?: string | null;
   servicio_codigo?: string | null;
   horas_cantidad?: number | null;
+  fecha_hora_inicio?: string | null;
+  fecha_hora_fin?: string | null;
+  /** Stand By: valor de la hora; el backend solo envía el que le corresponde al rol. */
+  valor_hora_tercero?: number | null;
+  valor_hora_cliente?: number | null;
+  servicio_permite_adjuntos?: boolean;
+  adjuntos_count?: number;
   liquidacion_contrato_fijo?: boolean;
   liquidacion_contrato_fijo_id?: number | null;
   liquidacion_periodo_inicio?: string | null;
@@ -153,6 +160,13 @@ export interface Viaje {
   placa: string;
   hora_inicio?: string | null;
   hora_fin?: string | null;
+  /** Stand By: rango completo (puede abarcar varios días), hora local sin zona horaria. */
+  fecha_hora_inicio?: string | null;
+  fecha_hora_fin?: string | null;
+  servicio_permite_adjuntos?: boolean;
+  adjuntos_count?: number;
+  valor_hora_tercero?: number | null;
+  valor_hora_cliente?: number | null;
   horas_cantidad?: number | null;
   conductor: string | null;
   tarifa_tercero: number | null;
@@ -178,8 +192,18 @@ export interface Servicio {
   nombre: string;
   codigo: string;
   requiere_origen_destino: boolean;
+  permite_adjuntos?: boolean;
   activo: boolean;
   created_by: number;
+}
+
+export interface ServicioAdjunto {
+  id: number;
+  viaje_id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
 }
 
 export interface CatalogoTarifa {
@@ -254,6 +278,9 @@ export interface CargaMasivaFilaPreview {
   tarifa_tercero: number | null;
   descripcion: string | null;
   manifiesto_numero: string | null;
+  fecha_hora_inicio?: string | null;
+  fecha_hora_fin?: string | null;
+  horas_cantidad?: number | null;
   valido: boolean;
   error: string | null;
 }

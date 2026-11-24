@@ -28,7 +28,10 @@ import { ActionModal } from "../components/common/ActionModal";
 import excelLogo from "../assets/excel-logo.svg";
 import { api } from "../services/api";
 import { Conciliacion, CargaMasivaFilaPreview, CargaMasivaResultado, Item, Operacion, Servicio, TarifaLookup, TipoVehiculo, User, Vehiculo, Viaje } from "../types";
+import { AdjuntosModal, AdjuntosSelector, type ViajeAdjuntable } from "../components/viajes/AdjuntosCampos";
+import { StandByCampos, StandByDetalle } from "../components/viajes/StandByCampos";
 import { formatCOP } from "../utils/formatters";
+import { esCodigoStandBy } from "../utils/standby";
 
 function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -224,12 +227,15 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     origen: "",
     destino: "",
     placa: "",
-    hora_inicio: "",
+    fecha_hora_inicio: "",
+    fecha_hora_fin: "",
     conductor: "",
     tarifa_tercero: "",
     tarifa_cliente: "",
     descripcion: "",
   });
+  const [archivosAdjuntos, setArchivosAdjuntos] = useState<File[]>([]);
+  const [adjuntosViaje, setAdjuntosViaje] = useState<ViajeAdjuntable | null>(null);
   const [selectedConciliacion, setSelectedConciliacion] = useState<number | null>(null);
   const [pendingViajes, setPendingViajes] = useState<Viaje[]>([]);
   const [selectedViajeIds, setSelectedViajeIds] = useState<number[]>([]);
@@ -390,29 +396,19 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     [serviciosActivos, viajeForm.servicio_id]
   );
   const servicioRequiereOrigenDestino = selectedServicio?.requiere_origen_destino ?? false;
-  const isServicioHoraExtra = selectedServicio?.codigo === "HORA_EXTRA";
+  const isServicioStandBy = esCodigoStandBy(selectedServicio?.codigo);
+  const servicioPermiteAdjuntos = selectedServicio?.permite_adjuntos ?? false;
   const isServicioConductorRelevo = selectedServicio?.codigo === "CONDUCTOR_RELEVO";
   const isServicioViaje = !selectedServicio || ["VIAJE", "VIAJE_ADICIONAL"].includes(selectedServicio.codigo);
   const shouldUseManualTarifa = !isServicioViaje && !tarifaLookup;
-  const horasExtraCalculadas = useMemo(() => {
-    if (!isServicioHoraExtra || !viajeForm.hora_inicio) return 0;
-    const [h, m] = viajeForm.hora_inicio.split(":").map(Number);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
-    const start = h * 60 + m;
-    const cut = 6 * 60;
-    let minutes = (cut - start) % (24 * 60);
-    if (minutes < 0) {
-      minutes += 24 * 60;
-    }
-    if (minutes === 0) {
-      minutes = 24 * 60;
-    }
-    return Number((minutes / 60).toFixed(2));
-  }, [isServicioHoraExtra, viajeForm.hora_inicio]);
+  // Solo informativo para el usuario: el backend recalcula y valida las horas al guardar.
+  const horasStandByEstimadas = useMemo(() => {
+    if (!isServicioStandBy || !viajeForm.fecha_hora_inicio || !viajeForm.fecha_hora_fin) return 0;
+    const ms = new Date(viajeForm.fecha_hora_fin).getTime() - new Date(viajeForm.fecha_hora_inicio).getTime();
+    return Number.isFinite(ms) && ms > 0 ? Number((ms / 3600000).toFixed(2)) : 0;
+  }, [isServicioStandBy, viajeForm.fecha_hora_inicio, viajeForm.fecha_hora_fin]);
   const tarifaHoraTercero = tarifaLookup?.tarifa_tercero ?? Number(viajeForm.tarifa_tercero || 0);
   const tarifaHoraCliente = tarifaLookup?.tarifa_cliente ?? Number(viajeForm.tarifa_cliente || 0);
-  const totalHoraExtraTercero = Number((horasExtraCalculadas * tarifaHoraTercero).toFixed(2));
-  const totalHoraExtraCliente = Number((horasExtraCalculadas * tarifaHoraCliente).toFixed(2));
   const fechaServicioInputValue = isServicioConductorRelevo
     ? viajeForm.fecha_servicio.slice(0, 7)
     : viajeForm.fecha_servicio.length === 7
@@ -971,8 +967,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     return codigo === "VIAJE" || codigo === "VIAJE_ADICIONAL" || tipo === "VIAJE";
   }
 
-  function isHoraExtraItem(item: Item): boolean {
-    return item.servicio_codigo === "HORA_EXTRA" || item.tipo === "HORA_EXTRA";
+  function isStandByItem(item: Item): boolean {
+    return esCodigoStandBy(item.servicio_codigo) || item.tipo === "HORA_EXTRA";
   }
 
   function getViajeServicioLabel(viaje: Viaje): string {
@@ -1222,7 +1218,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       !viajeForm.operacion_id ||
       !viajeForm.servicio_id ||
       !viajeForm.titulo.trim() ||
-      !viajeForm.fecha_servicio ||
+      (!isServicioStandBy && !viajeForm.fecha_servicio) ||
       (!isServicioConductorRelevo && !viajeForm.placa)
     ) {
       setError(
@@ -1233,8 +1229,12 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       return;
     }
 
-    if (isServicioHoraExtra && !viajeForm.hora_inicio) {
-      setError("Para Hora Extra debes ingresar hora inicio (hora fin fija a las 06:00). ");
+    if (isServicioStandBy && (!viajeForm.fecha_hora_inicio || !viajeForm.fecha_hora_fin)) {
+      setError("Para Stand By debes ingresar fecha y hora inicial y fecha y hora final.");
+      return;
+    }
+    if (isServicioStandBy && horasStandByEstimadas <= 0) {
+      setError("La fecha y hora final del Stand By debe ser posterior a la inicial.");
       return;
     }
 
@@ -1252,15 +1252,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       operacion_id: Number(viajeForm.operacion_id),
       servicio_id: Number(viajeForm.servicio_id),
       titulo: viajeForm.titulo,
-      fecha_servicio:
-        isServicioConductorRelevo && viajeForm.fecha_servicio.length === 7
+      // En Stand By el servidor usa la fecha de inicio; se envía solo para cumplir el contrato.
+      fecha_servicio: isServicioStandBy
+        ? viajeForm.fecha_hora_inicio.slice(0, 10)
+        : isServicioConductorRelevo && viajeForm.fecha_servicio.length === 7
           ? `${viajeForm.fecha_servicio}-01`
           : viajeForm.fecha_servicio,
       origen: viajeForm.origen.trim() || undefined,
       destino: viajeForm.destino.trim() || undefined,
       placa: isServicioConductorRelevo ? "" : viajeForm.placa,
-      hora_inicio: isServicioHoraExtra ? viajeForm.hora_inicio : undefined,
-      conductor: isServicioHoraExtra || isServicioConductorRelevo ? undefined : (viajeForm.conductor || ""),
+      fecha_hora_inicio: isServicioStandBy ? viajeForm.fecha_hora_inicio : undefined,
+      fecha_hora_fin: isServicioStandBy ? viajeForm.fecha_hora_fin : undefined,
+      conductor: isServicioStandBy || isServicioConductorRelevo ? undefined : (viajeForm.conductor || ""),
       tarifa_tercero:
         isServicioViaje || shouldUseManualTarifa
           ? Number(viajeForm.tarifa_tercero || 0)
@@ -1273,7 +1276,16 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
     };
 
     try {
-      await api.crearViaje(payload);
+      const viajeCreado = await api.crearViaje(payload);
+      let errorAdjuntos = "";
+      if (servicioPermiteAdjuntos && archivosAdjuntos.length > 0) {
+        try {
+          await api.subirAdjuntosServicio(viajeCreado.id, archivosAdjuntos);
+        } catch (adjError) {
+          errorAdjuntos = toSpanishError(adjError);
+        }
+      }
+      setArchivosAdjuntos([]);
       setViajeForm({
         operacion_id: "",
         servicio_id: "",
@@ -1282,7 +1294,8 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
         origen: "",
         destino: "",
         placa: "",
-        hora_inicio: "",
+        fecha_hora_inicio: "",
+        fecha_hora_fin: "",
         conductor: "",
         tarifa_tercero: "",
         tarifa_cliente: "",
@@ -1291,8 +1304,10 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       setTarifaLookup(null);
       await loadViajes();
       setSaveResultModal({
-        title: "Servicio cargado",
-        description: "El servicio se registró correctamente.",
+        title: errorAdjuntos ? "Servicio cargado, pero sin archivos" : "Servicio cargado",
+        description: errorAdjuntos
+          ? `El servicio se registró, pero los archivos no se pudieron adjuntar: ${errorAdjuntos} Puedes agregarlos desde la lista de servicios cargados.`
+          : "El servicio se registró correctamente.",
       });
     } catch (e) {
       setError(toSpanishError(e));
@@ -2207,7 +2222,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       name="servicio_id"
                       required
                       value={viajeForm.servicio_id}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setViajeForm((prev) => ({
                           ...prev,
                           servicio_id: e.target.value,
@@ -2215,9 +2230,11 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                           destino: "",
                           placa: "",
                           conductor: "",
-                          hora_inicio: "",
-                        }))
-                      }
+                          fecha_hora_inicio: "",
+                          fecha_hora_fin: "",
+                        }));
+                        setArchivosAdjuntos([]);
+                      }}
                       className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                     >
                       <option value="">Seleccione...</option>
@@ -2247,6 +2264,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     />
                   </div>
 
+                  {!isServicioStandBy && (
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                       {isServicioConductorRelevo ? "Mes" : "Fecha"}
@@ -2263,6 +2281,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
                     />
                   </div>
+                  )}
 
                   {!isServicioConductorRelevo && (
                   <div>
@@ -2330,7 +2349,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </>
                   )}
 
-                  {!isServicioHoraExtra && !isServicioConductorRelevo && (
+                  {!isServicioStandBy && !isServicioConductorRelevo && (
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
                         Conductor (opcional)
@@ -2344,47 +2363,17 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                     </div>
                   )}
 
-                  {isServicioHoraExtra && (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                          Hora inicio
-                        </label>
-                        <input
-                          name="hora_inicio"
-                          type="time"
-                          required
-                          value={viajeForm.hora_inicio}
-                          onChange={(e) => setViajeForm((prev) => ({ ...prev, hora_inicio: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral">
-                          Hora fin
-                        </label>
-                        <input
-                          type="time"
-                          value="06:00"
-                          disabled
-                          className="w-full rounded-lg border border-border bg-slate-100 px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none"
-                        />
-                      </div>
-                      <div className="md:col-span-2 rounded-lg border border-sky-200 bg-sky-50/70 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-sky-900">Resumen Hora Extra</p>
-                        <p className="mt-1 text-sm text-sky-900">
-                          Horas a cobrar: <span className="font-semibold">{horasExtraCalculadas > 0 ? horasExtraCalculadas.toFixed(2) : "0.00"}</span>
-                        </p>
-                        {horasExtraCalculadas > 0 && (tarifaHoraTercero > 0 || tarifaHoraCliente > 0) && (
-                          <p className="mt-1 text-sm text-sky-900">
-                            <>Total tercero estimado: <span className="font-semibold">{formatCOP(totalHoraExtraTercero)}</span>{user.rol === "COINTRA" ? " · " : ""}</>
-                            {user.rol !== "TERCERO" && (
-                              <>Total cliente estimado: <span className="font-semibold">{formatCOP(totalHoraExtraCliente)}</span></>
-                            )}
-                          </p>
-                        )}
-                      </div>
-                    </>
+                  {isServicioStandBy && (
+                    <StandByCampos
+                      inicio={viajeForm.fecha_hora_inicio}
+                      fin={viajeForm.fecha_hora_fin}
+                      onChange={(campo, valor) => setViajeForm((prev) => ({ ...prev, [campo]: valor }))}
+                      horasEstimadas={horasStandByEstimadas}
+                      tarifaHoraTercero={tarifaHoraTercero}
+                      tarifaHoraCliente={tarifaHoraCliente}
+                      mostrarTercero
+                      mostrarCliente={user.rol !== "TERCERO"}
+                    />
                   )}
 
                   {isServicioViaje || shouldUseManualTarifa ? (
@@ -2460,6 +2449,9 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-primary focus:ring-2 focus:ring-primary/10"
                     />
                   </div>
+                  {servicioPermiteAdjuntos && (
+                    <AdjuntosSelector archivos={archivosAdjuntos} onChange={setArchivosAdjuntos} />
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -2473,7 +2465,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
               <div className="mt-5 border-t border-border pt-5">
                 <h3 className="mb-2 text-sm font-semibold text-slate-900">Carga masiva desde Excel</h3>
                 <p className="mb-3 text-xs text-neutral">
-                  Carga múltiples servicios a la vez (viajes, horas extra, descargue, estibas o cualquier otro tipo de servicio activo) usando un archivo Excel. Descarga la plantilla — trae una hoja "Instrucciones" con el catálogo de tipos de servicio disponible — primero selecciona la operación, luego el archivo.
+                  Carga múltiples servicios a la vez (viajes, Stand By, descargue, estibas o cualquier otro tipo de servicio activo) usando un archivo Excel. Descarga la plantilla — trae una hoja "Instrucciones" con el catálogo de tipos de servicio disponible — primero selecciona la operación, luego el archivo.
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -2744,6 +2736,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-2 py-2 max-w-[150px] truncate" title={v.titulo}>{v.titulo}</td>
                         <td className="px-2 py-2 max-w-[130px]">
                           <div className="truncate" title={v.servicio_nombre ?? "Viaje"}>{v.servicio_nombre ?? "Viaje"}</div>
+                          {esCodigoStandBy(v.servicio_codigo) && (
+                            <StandByDetalle
+                              horas={v.horas_cantidad}
+                              inicio={v.fecha_hora_inicio}
+                              fin={v.fecha_hora_fin}
+                              valorHoraTercero={v.valor_hora_tercero}
+                              valorHoraCliente={v.valor_hora_cliente}
+                              compacto
+                            />
+                          )}
+                          {!!v.servicio_permite_adjuntos && (
+                            <button
+                              type="button"
+                              onClick={() => setAdjuntosViaje(v)}
+                              className="mt-0.5 rounded-full border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Archivos ({v.adjuntos_count ?? 0})
+                            </button>
+                          )}
                           {!!v.viaje_adicional_solicitud_id && (
                             <button
                               type="button"
@@ -3376,8 +3387,17 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-3 py-2">{selectedOperacion?.nombre ?? `Operación #${selected.operacion_id}`}</td>
                         <td className="px-3 py-2 font-medium">
                           {getViajeServicioLabel(v)}
-                          {v.servicio_codigo === "HORA_EXTRA" && v.horas_cantidad !== null && v.horas_cantidad !== undefined && (
-                            <p className="text-[11px] font-normal text-neutral">{v.horas_cantidad.toFixed(2)} horas</p>
+                          {esCodigoStandBy(v.servicio_codigo) && (
+                            <StandByDetalle
+                              horas={v.horas_cantidad}
+                              inicio={v.fecha_hora_inicio}
+                              fin={v.fecha_hora_fin}
+                              valorHoraTercero={v.valor_hora_tercero}
+                              valorHoraCliente={v.valor_hora_cliente}
+                              totalTercero={v.tarifa_tercero}
+                              totalCliente={v.tarifa_cliente}
+                              className="text-[11px] font-normal text-neutral"
+                            />
                           )}
                         </td>
                         <td className="px-3 py-2">{v.fecha_servicio}</td>
@@ -3885,8 +3905,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                     </td>
                                     <td className="px-3 py-2">
                                       <div className="font-medium text-slate-900">{getItemServicioLabel(item)}</div>
-                                      {isHoraExtraItem(item) && item.horas_cantidad !== null && item.horas_cantidad !== undefined && (
-                                        <p className="text-[11px] text-slate-500">{item.horas_cantidad.toFixed(2)} horas</p>
+                                      {isStandByItem(item) && (
+                                        <StandByDetalle
+                                          horas={item.horas_cantidad}
+                                          inicio={item.fecha_hora_inicio}
+                                          fin={item.fecha_hora_fin}
+                                          valorHoraTercero={item.valor_hora_tercero}
+                                          valorHoraCliente={item.valor_hora_cliente}
+                                          totalTercero={item.tarifa_tercero}
+                                          totalCliente={item.tarifa_cliente}
+                                        />
+                                      )}
+                                      {item.servicio_permite_adjuntos && !!item.viaje_id && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setAdjuntosViaje({ id: item.viaje_id as number, titulo: item.descripcion || getItemServicioLabel(item) })}
+                                          className="mt-1 rounded-full border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                                        >
+                                          Archivos ({item.adjuntos_count ?? 0})
+                                        </button>
                                       )}
                                     </td>
                                     <td className="px-3 py-2">
@@ -4623,8 +4660,25 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         </td>
                         <td className="px-3 py-2">
                           <div className="font-medium text-slate-900">{getItemServicioLabel(item)}</div>
-                          {isHoraExtraItem(item) && item.horas_cantidad !== null && item.horas_cantidad !== undefined && (
-                            <p className="text-[11px] text-slate-500">{item.horas_cantidad.toFixed(2)} horas</p>
+                          {isStandByItem(item) && (
+                            <StandByDetalle
+                              horas={item.horas_cantidad}
+                              inicio={item.fecha_hora_inicio}
+                              fin={item.fecha_hora_fin}
+                              valorHoraTercero={item.valor_hora_tercero}
+                              valorHoraCliente={item.valor_hora_cliente}
+                              totalTercero={item.tarifa_tercero}
+                              totalCliente={item.tarifa_cliente}
+                            />
+                          )}
+                          {item.servicio_permite_adjuntos && !!item.viaje_id && (
+                            <button
+                              type="button"
+                              onClick={() => setAdjuntosViaje({ id: item.viaje_id as number, titulo: item.descripcion || getItemServicioLabel(item) })}
+                              className="mt-1 rounded-full border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Archivos ({item.adjuntos_count ?? 0})
+                            </button>
                           )}
                           {item.liquidacion_contrato_fijo && (
                             <>
@@ -4926,6 +4980,14 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
       </>
       )}
 
+      {adjuntosViaje && (
+        <AdjuntosModal
+          viaje={adjuntosViaje}
+          puedeEditar={user.rol === "TERCERO" || user.rol === "COINTRA"}
+          onClose={() => setAdjuntosViaje(null)}
+          onChanged={() => void loadViajes()}
+        />
+      )}
       <ActionModal
         open={!!saveResultModal}
         title={saveResultModal?.title ?? "Resultado"}
@@ -5370,6 +5432,7 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                       <th className="border-b border-border px-2 py-2 text-left">Destino</th>
                       <th className="border-b border-border px-2 py-2 text-left">Conductor</th>
                       <th className="border-b border-border px-2 py-2 text-right">Tarifa Tercero</th>
+                      <th className="border-b border-border px-2 py-2 text-left">Stand By</th>
                       <th className="border-b border-border px-2 py-2 text-left">Manifiesto</th>
                       <th className="border-b border-border px-2 py-2 text-left">Error</th>
                     </tr>
@@ -5397,6 +5460,18 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                         <td className="px-2 py-1.5">{fila.conductor ?? "-"}</td>
                         <td className="px-2 py-1.5 text-right whitespace-nowrap">
                           {fila.tarifa_tercero != null ? `$ ${fila.tarifa_tercero.toLocaleString("es-CO")}` : "-"}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          {fila.horas_cantidad != null ? (
+                            <StandByDetalle
+                              horas={fila.horas_cantidad}
+                              inicio={fila.fecha_hora_inicio}
+                              fin={fila.fecha_hora_fin}
+                              className="text-xs text-slate-700"
+                            />
+                          ) : (
+                            "-"
+                          )}
                         </td>
                         <td className="px-2 py-1.5 whitespace-nowrap font-mono text-xs">{fila.manifiesto_numero ?? "-"}</td>
                         <td className="px-2 py-1.5 text-danger max-w-[200px]" title={fila.error ?? ""}>

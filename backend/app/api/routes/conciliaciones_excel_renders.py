@@ -1,6 +1,7 @@
 from typing import NamedTuple
 from openpyxl.styles import Alignment, Border, Font, PatternFill
 from app.models.conciliacion_item import ConciliacionItem
+from .conciliaciones_excel_standby import columnas_standby, escribir_celdas_standby
 from .conciliaciones_helpers import (
     _as_float,
     _item_servicio_codigo,
@@ -50,7 +51,7 @@ def _xl_write_headers(ws, row_num: int, headers: list[str], ctx: _ExcelContext) 
     for idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=row_num, column=idx, value=header)
         cell.fill = ctx.header_fill
-        if header in {"Valor Cliente", "Valor Tercero", "Rentabilidad", "Ganancia Cointra"}:
+        if header in {"Valor Cliente", "Valor Tercero", "Rentabilidad", "Ganancia Cointra", "Valor Hora Cliente", "Valor Hora Tercero"}:
             cell.fill = ctx.section_fill
         cell.font = ctx.header_font
         cell.alignment = ctx.center
@@ -173,6 +174,7 @@ def _xl_write_adicionales_unified_section(
         "Ciudad Origen",
         "Ciudad Destino",
     ]
+    headers.extend(columnas_standby(source_items, ctx))
     if ctx.show_tarifa_cliente:
         headers.append("Valor Cliente")
     if ctx.show_tarifa_tercero:
@@ -251,6 +253,7 @@ def _xl_write_adicionales_unified_section(
                         ws.cell(row=row_num, column=column, value=values[header])
                 if first_row:
                     _xl_write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero, ctx)
+                    escribir_celdas_standby(ws, row_num, col_idx, item, ctx)
                 _xl_style_row(ws, row_num, len(headers), ctx)
                 row_num += 1
                 first_row = False
@@ -421,6 +424,7 @@ def _xl_write_additional_services_section(
     ws.cell(row=start_row, column=1, value=title)
     ws.cell(row=start_row, column=1).font = Font(bold=True, size=11, color="111827")
     headers = ["Placa", "Tipo Vehiculo", "Fecha", "Titulo Servicio", "Tipo Servicio"]
+    headers.extend(columnas_standby(source_items, ctx))
     if ctx.show_tarifa_cliente:
         headers.append("Valor Cliente")
     if ctx.show_tarifa_tercero:
@@ -478,6 +482,7 @@ def _xl_write_additional_services_section(
                     if header in values:
                         ws.cell(row=row_num, column=column, value=values[header])
                 _xl_write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero, ctx)
+                escribir_celdas_standby(ws, row_num, col_idx, item, ctx)
                 _xl_style_row(ws, row_num, len(headers), ctx)
                 row_num += 1
 
@@ -508,6 +513,7 @@ def _xl_write_additional_services_section(
             if header in values:
                 ws.cell(row=row_num, column=column, value=values[header])
         _xl_write_financials(ws, row_num, col_idx, tarifa_cliente, tarifa_tercero, ctx)
+        escribir_celdas_standby(ws, row_num, col_idx, item, ctx)
         _xl_style_row(ws, row_num, len(headers), ctx)
         row_num += 1
 

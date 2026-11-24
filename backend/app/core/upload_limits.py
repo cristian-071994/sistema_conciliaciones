@@ -7,3 +7,5 @@ claro y protección aunque el archivo llegue por otra vía."""
 FACTURA_PDF_MAX_BYTES = 15 * 1024 * 1024  # 15 MB por archivo de factura
 CARGA_MASIVA_EXCEL_MAX_BYTES = 20 * 1024 * 1024  # 20 MB, igual al límite ya fijado en nginx
 MANIFIESTO_VIAJE_ADICIONAL_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+SERVICIO_ADJUNTO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB por soporte (PDF/imagen)
+SERVICIO_ADJUNTOS_MAX_CANTIDAD = 3  # máximo de soportes por servicio cargado

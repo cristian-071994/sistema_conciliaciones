@@ -13,7 +13,9 @@ class ViajeCreate(BaseModel):
     origen: str | None = None
     destino: str | None = None
     placa: str
-    hora_inicio: time | None = None
+    # Solo para Stand By: rango completo, hora local de Colombia, sin zona horaria.
+    fecha_hora_inicio: datetime | None = None
+    fecha_hora_fin: datetime | None = None
     conductor: str | None = None
     tarifa_tercero: float | None = None
     tarifa_cliente: float | None = None
@@ -34,6 +36,8 @@ class ViajeOut(ORMModel):
     placa: str
     hora_inicio: time | None
     hora_fin: time | None
+    fecha_hora_inicio: datetime | None = None
+    fecha_hora_fin: datetime | None = None
     horas_cantidad: float | None
     conductor: str | None
     tarifa_tercero: float | None
@@ -58,9 +62,9 @@ class ViajeUpdate(BaseModel):
     origen: str | None = None
     destino: str | None = None
     placa: str | None = None
-    hora_inicio: time | None = None
-    hora_fin: time | None = None
-    horas_cantidad: float | None = None
+    # Stand By: las horas se recalculan en el servidor a partir de estas fechas.
+    fecha_hora_inicio: datetime | None = None
+    fecha_hora_fin: datetime | None = None
     conductor: str | None = None
     tarifa_tercero: float | None = None
     tarifa_cliente: float | None = None
@@ -90,5 +94,8 @@ class CargaMasivaFilaPreview(BaseModel):
     tarifa_tercero: float | None = None
     descripcion: str | None = None
     manifiesto_numero: str | None = None
+    fecha_hora_inicio: str | None = None
+    fecha_hora_fin: str | None = None
+    horas_cantidad: float | None = None
     valido: bool
     error: str | None = None

@@ -129,6 +129,13 @@ class ConciliacionItemOut(ORMModel):
     servicio_nombre: str | None = None
     servicio_codigo: str | None = None
     horas_cantidad: float | None = None
+    fecha_hora_inicio: datetime | None = None
+    fecha_hora_fin: datetime | None = None
+    # Stand By: valor de la hora (cada rol recibe solo el que le corresponde).
+    valor_hora_tercero: float | None = None
+    valor_hora_cliente: float | None = None
+    servicio_permite_adjuntos: bool = False
+    adjuntos_count: int = 0
     liquidacion_contrato_fijo: bool = False
     liquidacion_contrato_fijo_id: int | None = None
     liquidacion_periodo_inicio: date | None = None

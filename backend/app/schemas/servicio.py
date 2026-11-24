@@ -6,11 +6,13 @@ from app.schemas.common import ORMModel
 class ServicioCreate(BaseModel):
     nombre: str = Field(min_length=2, max_length=120)
     requiere_origen_destino: bool = False
+    permite_adjuntos: bool = False
 
 
 class ServicioUpdate(BaseModel):
     nombre: str | None = Field(default=None, min_length=2, max_length=120)
     requiere_origen_destino: bool | None = None
+    permite_adjuntos: bool | None = None
 
 
 class ServicioOut(ORMModel):
@@ -18,6 +20,7 @@ class ServicioOut(ORMModel):
     nombre: str
     codigo: str
     requiere_origen_destino: bool
+    permite_adjuntos: bool = False
     activo: bool
     created_by: int
 

@@ -1,11 +1,12 @@
-from datetime import date, datetime, time
+from datetime import date, datetime
 from io import BytesIO
+import re
 import unicodedata
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl import load_workbook
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, is_cointra_admin, require_permission
@@ -15,9 +16,9 @@ from app.models.conciliacion import Conciliacion
 from app.models.conciliacion_item import ConciliacionItem
 from app.models.enums import UserRole
 from app.models.enums import ItemTipo
-from app.models.catalogo_tarifa import CatalogoTarifa
 from app.models.operacion import Operacion
 from app.models.servicio import Servicio
+from app.models.servicio_adjunto import ServicioAdjunto
 from app.models.usuario import Usuario
 from app.models.manifiesto_viaje_adicional import ManifiestoViajeAdicional
 from app.models.usuario_operacion import usuario_operaciones_asignadas
@@ -26,8 +27,17 @@ from app.models.viaje import Viaje
 from app.models.viaje_adicional import SolicitudViajeAdicional
 from app.schemas.viaje import CargaMasivaFilaPreview, CargaMasivaResultado, ViajeCreate, ViajeOut, ViajeUpdate
 from app.services.avansat_cache import resolve_avansat_from_cache_only
+from app.services.carga_masiva_plantilla import construir_plantilla
 from app.services.permisos_service import tiene_permiso
 from app.services.pricing import calculate_tarifa_cliente
+from app.services.standby import (
+    aplicar_cambio_rango_standby,
+    buscar_tarifa_catalogo,
+    calcular_horas_standby,
+    es_standby,
+    resolver_standby_carga_masiva,
+    valor_por_hora,
+)
 
 router = APIRouter(prefix="/viajes", tags=["viajes"])
 
@@ -83,12 +93,6 @@ def _is_viaje_or_extra(servicio: Servicio | None) -> bool:
     return servicio.codigo in {"VIAJE", "VIAJE_ADICIONAL"}
 
 
-def _is_hora_extra(servicio: Servicio | None) -> bool:
-    if not servicio:
-        return False
-    return servicio.codigo == "HORA_EXTRA"
-
-
 def _is_conductor_relevo(servicio: Servicio | None) -> bool:
     if not servicio:
         return False
@@ -100,41 +104,6 @@ def _needs_origen_destino(servicio: Servicio | None) -> bool:
     if not servicio:
         return True  # por defecto, si no hay servicio, se trata como viaje
     return servicio.requiere_origen_destino
-
-
-def _calculate_horas_hasta_corte(hora_inicio: time, corte: time = time(6, 0)) -> float:
-    start_minutes = hora_inicio.hour * 60 + hora_inicio.minute
-    end_minutes = corte.hour * 60 + corte.minute
-    total_minutes = (end_minutes - start_minutes) % (24 * 60)
-    if total_minutes == 0:
-        total_minutes = 24 * 60
-    return round(total_minutes / 60, 2)
-
-
-def _horas_hora_extra_desde_valor(db: Session, servicio: Servicio | None, placa: str, valor_tercero: float) -> float | None:
-    """En la carga masiva el Excel trae el valor total pagado por Hora Extra,
-    no la cantidad de horas. Las reconstruye dividiendo ese valor entre la
-    tarifa por hora parametrizada en el Catálogo de Tarifas para el tipo de
-    vehículo de la placa cargada. Si no hay tarifa parametrizada para ese
-    tipo de vehículo, la fila se carga igual que hoy — simplemente sin
-    cantidad de horas calculada (no bloquea la carga)."""
-    if not _is_hora_extra(servicio) or not placa:
-        return None
-    vehiculo = db.query(Vehiculo).filter(Vehiculo.placa == placa, Vehiculo.activo.is_(True)).first()
-    if not vehiculo:
-        return None
-    tarifa_catalogo = (
-        db.query(CatalogoTarifa)
-        .filter(
-            CatalogoTarifa.servicio_id == servicio.id,
-            CatalogoTarifa.tipo_vehiculo_id == vehiculo.tipo_vehiculo_id,
-            CatalogoTarifa.activo.is_(True),
-        )
-        .first()
-    )
-    if not tarifa_catalogo or not tarifa_catalogo.tarifa_tercero:
-        return None
-    return round(valor_tercero / float(tarifa_catalogo.tarifa_tercero), 2)
 
 
 @router.post("", response_model=ViajeOut)
@@ -185,13 +154,14 @@ def create_viaje(
     tarifa_tercero = float(payload.tarifa_tercero or 0)
     tarifa_cliente = float(payload.tarifa_cliente or 0)
     rentabilidad = None
-    hora_inicio = payload.hora_inicio
+    hora_inicio = None
     hora_fin = None
+    fecha_hora_inicio = None
+    fecha_hora_fin = None
+    fecha_servicio = payload.fecha_servicio
     horas_cantidad = None
 
     if is_conductor_relevo:
-        hora_inicio = None
-        hora_fin = None
         horas_cantidad = 1.0
 
         tarifa_manual_tercero = float(payload.tarifa_tercero or 0)
@@ -215,25 +185,21 @@ def create_viaje(
         if not vehiculo:
             raise HTTPException(status_code=400, detail="La placa seleccionada no tiene vehiculo activo")
 
-        tarifa_catalogo = (
-            db.query(CatalogoTarifa)
-            .filter(
-                CatalogoTarifa.servicio_id == servicio.id,
-                CatalogoTarifa.tipo_vehiculo_id == vehiculo.tipo_vehiculo_id,
-                CatalogoTarifa.activo.is_(True),
-            )
-            .first()
-        )
+        tarifa_catalogo = buscar_tarifa_catalogo(db, servicio, vehiculo.tipo_vehiculo_id)
         factor = 1.0
-        if _is_hora_extra(servicio):
-            if not hora_inicio:
-                raise HTTPException(status_code=400, detail="Hora inicio es obligatoria para servicio Hora Extra")
-            hora_fin = time(6, 0)
-            horas_cantidad = _calculate_horas_hasta_corte(hora_inicio, hora_fin)
-            factor = float(horas_cantidad)
+        if es_standby(servicio):
+            try:
+                horas_cantidad = calcular_horas_standby(payload.fecha_hora_inicio, payload.fecha_hora_fin)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            fecha_hora_inicio = payload.fecha_hora_inicio
+            fecha_hora_fin = payload.fecha_hora_fin
+            hora_inicio = fecha_hora_inicio.time()
+            hora_fin = fecha_hora_fin.time()
+            # El Stand By se concilia en el día en que empieza.
+            fecha_servicio = fecha_hora_inicio.date()
+            factor = horas_cantidad
         else:
-            hora_inicio = None
-            hora_fin = None
             horas_cantidad = 1.0
 
         if tarifa_catalogo:
@@ -266,12 +232,14 @@ def create_viaje(
         tercero_id=operacion.tercero_id,
         servicio_id=servicio.id if servicio else None,
         titulo=payload.titulo.strip(),
-        fecha_servicio=payload.fecha_servicio,
+        fecha_servicio=fecha_servicio,
         origen=origen,
         destino=destino,
         placa=placa,
         hora_inicio=hora_inicio,
         hora_fin=hora_fin,
+        fecha_hora_inicio=fecha_hora_inicio,
+        fecha_hora_fin=fecha_hora_fin,
         horas_cantidad=horas_cantidad,
         conductor=None if is_conductor_relevo else payload.conductor,
         tarifa_tercero=tarifa_tercero,
@@ -403,6 +371,15 @@ def list_viajes(
         )
         solicitud_id_by_viaje_id = {vid: sid for vid, sid in solicitudes_con_manifiesto if vid is not None}
 
+    adjuntos_por_viaje: dict[int, int] = {}
+    if viaje_ids:
+        adjuntos_por_viaje = dict(
+            db.query(ServicioAdjunto.viaje_id, func.count(ServicioAdjunto.id))
+            .filter(ServicioAdjunto.viaje_id.in_(viaje_ids))
+            .group_by(ServicioAdjunto.viaje_id)
+            .all()
+        )
+
     payload: list[dict] = []
     for viaje in viajes:
         effective_estado = viaje.estado_conciliacion
@@ -425,14 +402,22 @@ def list_viajes(
         out["servicio_nombre"] = viaje.servicio.nombre if viaje.servicio else None
         out["servicio_codigo"] = viaje.servicio.codigo if viaje.servicio else None
         out["viaje_adicional_solicitud_id"] = solicitud_id_by_viaje_id.get(viaje.id)
+        out["servicio_permite_adjuntos"] = bool(viaje.servicio and viaje.servicio.permite_adjuntos)
+        out["adjuntos_count"] = adjuntos_por_viaje.get(viaje.id, 0)
+        if es_standby(viaje.servicio):
+            # El valor de la hora se deriva del total visible (que es el que se concilia).
+            out["valor_hora_tercero"] = valor_por_hora(out.get("tarifa_tercero"), out.get("horas_cantidad"))
+            out["valor_hora_cliente"] = valor_por_hora(out.get("tarifa_cliente"), out.get("horas_cantidad"))
 
         # Seguridad por API: cada rol solo recibe los valores financieros que le corresponden.
         if user.rol == UserRole.CLIENTE:
             out["tarifa_tercero"] = None
             out["rentabilidad"] = None
+            out["valor_hora_tercero"] = None
         elif user.rol == UserRole.TERCERO:
             out["tarifa_cliente"] = None
             out["rentabilidad"] = None
+            out["valor_hora_cliente"] = None
 
         payload.append(out)
 
@@ -455,6 +440,12 @@ def update_viaje(
     data = payload.model_dump(exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="No se enviaron cambios")
+
+    if "fecha_hora_inicio" in data or "fecha_hora_fin" in data:
+        try:
+            aplicar_cambio_rango_standby(viaje, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     if "tarifa_tercero" in data and data.get("tarifa_tercero") is not None:
         operacion = db.get(Operacion, viaje.operacion_id)
@@ -520,6 +511,10 @@ def _normalize_excel_header(h: str) -> str:
         return "tipo_servicio"
     if "titul" in h:
         return "titulo"
+    if "inicio" in h:
+        return "fecha_hora_inicio"
+    if re.search(r"(^|[^a-z])(fin|final)([^a-z]|$)", h):  # palabra completa, sin confundir con "manifiesto"
+        return "fecha_hora_fin"
     if "fecha" in h:
         return "fecha_servicio"
     if "placa" in h:
@@ -589,7 +584,7 @@ def _validate_manifiesto_bulk(db: Session, manifiesto: str, placa: str) -> str |
 def _get_servicios_map(db: Session) -> dict[str, Servicio]:
     """Retorna mapa codigo/nombre -> Servicio para TODOS los servicios activos
     del catalogo — la carga masiva acepta cualquier tipo de servicio que el
-    usuario haya creado en el modulo Servicios (Hora Extra, Descargue,
+    usuario haya creado en el modulo Servicios (Stand By, Descargue,
     Estibas, o cualquier otro), no solo Viaje/Viaje Adicional."""
     servicios = db.query(Servicio).filter(Servicio.activo.is_(True)).all()
     result: dict[str, Servicio] = {}
@@ -603,158 +598,9 @@ def _get_servicios_map(db: Session) -> dict[str, Servicio]:
 
 @router.get("/plantilla-excel")
 def descargar_plantilla_viajes(db: Session = Depends(get_db)):
-    """Descarga una plantilla Excel para carga masiva de servicios. La hoja
-    'Instrucciones' y el desplegable de Tipo Servicio se generan a partir del
-    catálogo real de servicios activos — cualquier servicio que se cree desde
-    el módulo Servicios (Hora Extra, Descargue, Estibas, etc., además de
-    Viaje/Viaje Adicional) aparece automáticamente la próxima vez que se
-    descargue la plantilla, sin tocar este código."""
-    from openpyxl.utils import get_column_letter
-    from openpyxl.worksheet.datavalidation import DataValidation
-
-    servicios_activos = (
-        db.query(Servicio).filter(Servicio.activo.is_(True)).order_by(Servicio.nombre.asc()).all()
-    )
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Carga de Servicios"
-
-    col_labels = [
-        "tipo_servicio",
-        "titulo",
-        "fecha_servicio",
-        "placa",
-        "origen",
-        "destino",
-        "conductor",
-        "tarifa_tercero",
-        "descripcion",
-        "manifiesto_numero",
-    ]
-    col_display = [
-        "Tipo Servicio",
-        "Título",
-        "Fecha (YYYY-MM-DD)",
-        "Placa",
-        "Origen",
-        "Destino",
-        "Conductor (opcional)",
-        "Tarifa Tercero",
-        "Descripción (opcional)",
-        "Manifiesto (opcional)",
-    ]
-    col_widths = [22, 30, 20, 14, 22, 22, 22, 18, 30, 22]
-
-    header_fill = PatternFill(start_color="1F6B3A", end_color="1F6B3A", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True, size=11)
-
-    for col_num, (label, display, width) in enumerate(zip(col_labels, col_display, col_widths), 1):
-        cell = ws.cell(row=1, column=col_num, value=display)
-        cell.fill = header_fill
-        cell.font = header_font
-        ws.column_dimensions[get_column_letter(col_num)].width = width
-
-    # Fila(s) de ejemplo — una por cada servicio activo (hasta un máximo
-    # razonable) para que quede claro qué valores va en cada tipo, en
-    # particular cuándo origen/destino aplica y cuándo no.
-    filas_ejemplo = []
-    for servicio in servicios_activos[:6]:
-        filas_ejemplo.append(
-            [
-                servicio.codigo,
-                f"Ejemplo {servicio.nombre}",
-                "2026-05-15",
-                "ABC123",
-                "Ciudad A" if servicio.requiere_origen_destino else "",
-                "Ciudad B" if servicio.requiere_origen_destino else "",
-                "Juan Pérez",
-                150000,
-                "",
-                "",
-            ]
-        )
-    if not filas_ejemplo:
-        filas_ejemplo.append(["VIAJE", "Urbano Ruta 1", "2026-05-15", "ABC123", "Ciudad A", "Ciudad B", "Juan Pérez", 150000, "", ""])
-
-    for row_num, fila in enumerate(filas_ejemplo, start=2):
-        for col_num, val in enumerate(fila, 1):
-            ws.cell(row=row_num, column=col_num, value=val)
-
-    # Desplegable de Tipo Servicio contra el catálogo real (evita typos que
-    # tumben la fila al cargar) — se alimenta de una hoja de referencia
-    # oculta en vez de una lista inline por si hay muchos servicios/nombres largos.
-    if servicios_activos:
-        ws_ref = wb.create_sheet("_ServiciosValidos")
-        for i, servicio in enumerate(servicios_activos, start=1):
-            ws_ref.cell(row=i, column=1, value=servicio.codigo)
-        ws_ref.sheet_state = "hidden"
-
-        dv = DataValidation(
-            type="list",
-            formula1=f"_ServiciosValidos!$A$1:$A${len(servicios_activos)}",
-            allow_blank=True,
-            showErrorMessage=True,
-        )
-        dv.error = "Selecciona un Tipo Servicio de la lista — revisa la hoja 'Instrucciones' para ver el catálogo completo."
-        dv.errorTitle = "Tipo de servicio inválido"
-        ws.add_data_validation(dv)
-        dv.add(f"A2:A1000")
-
-    # Instrucciones en hoja separada
-    ws_info = wb.create_sheet("Instrucciones")
-    ws_info["A1"] = "INSTRUCCIONES PARA CARGA MASIVA DE SERVICIOS"
-    ws_info["A1"].font = Font(bold=True, size=13)
-    instrucciones = [
-        "",
-        "1. En la hoja 'Carga de Servicios' complete una fila por cada servicio a cargar.",
-        "2. La operación se selecciona en el sistema al momento de subir el archivo.",
-        "3. Tipo Servicio: use exactamente el código de la tabla de abajo (columna A tiene un desplegable con los valores válidos).",
-        "4. Fecha: formato YYYY-MM-DD (ej: 2026-05-15).",
-        "5. Placa: solo la placa del vehículo (ej: ABC123).",
-        "6. Tarifa Tercero: número sin puntos ni comas (ej: 150000) — siempre obligatoria; el sistema calcula la tarifa cliente según la rentabilidad de la operación.",
-        "7. Origen y Destino: obligatorios solo para los tipos de servicio marcados 'Sí' en la columna 'Requiere origen/destino' de la tabla de abajo.",
-        "8. Conductor y Descripción son opcionales.",
-        "9. No modifique los encabezados de la fila 1 ni el nombre de la hoja.",
-        "10. Borre las filas de ejemplo antes de cargar el archivo real.",
-        "11. Manifiesto: opcional. Si se indica, debe existir en Avansat y la placa debe coincidir.",
-        "",
-        "TIPOS DE SERVICIO DISPONIBLES ACTUALMENTE EN EL SISTEMA",
-        "(esta tabla se genera automáticamente desde el módulo Servicios — si creas un servicio nuevo ahí, aparecerá aquí la próxima vez que descargues esta plantilla)",
-        "",
-    ]
-    for i, linea in enumerate(instrucciones, 2):
-        ws_info[f"A{i}"] = linea
-    ws_info.column_dimensions["A"].width = 34
-    ws_info.column_dimensions["B"].width = 40
-    ws_info.column_dimensions["C"].width = 26
-
-    tabla_header_row = 2 + len(instrucciones)
-    tabla_headers = ["Código (Tipo Servicio)", "Nombre", "Requiere origen/destino"]
-    for col_num, texto in enumerate(tabla_headers, 1):
-        cell = ws_info.cell(row=tabla_header_row, column=col_num, value=texto)
-        cell.fill = header_fill
-        cell.font = header_font
-
-    if servicios_activos:
-        for i, servicio in enumerate(servicios_activos, start=1):
-            row = tabla_header_row + i
-            ws_info.cell(row=row, column=1, value=servicio.codigo)
-            ws_info.cell(row=row, column=2, value=servicio.nombre)
-            ws_info.cell(row=row, column=3, value="Sí" if servicio.requiere_origen_destino else "No")
-    else:
-        ws_info.cell(
-            row=tabla_header_row + 1,
-            column=1,
-            value="No hay servicios activos configurados todavía — créalos en el módulo Servicios antes de usar la carga masiva.",
-        )
-
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
+    """Descarga la plantilla Excel de carga masiva (ver services/carga_masiva_plantilla.py)."""
     return StreamingResponse(
-        output,
+        construir_plantilla(db),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=plantilla_carga_servicios.xlsx"},
     )
@@ -820,6 +666,8 @@ async def preview_carga_masiva_viajes(
         destino = get_cell(row, "destino")
         conductor = get_cell(row, "conductor")
         tarifa_raw = row[idx["tarifa_tercero"]] if "tarifa_tercero" in idx else None
+        inicio_raw = row[idx["fecha_hora_inicio"]] if "fecha_hora_inicio" in idx else None
+        fin_raw = row[idx["fecha_hora_fin"]] if "fecha_hora_fin" in idx else None
         descripcion = get_cell(row, "descripcion")
 
         placa = placa_raw.upper() if placa_raw else None
@@ -864,10 +712,12 @@ async def preview_carga_masiva_viajes(
             error = "Título es obligatorio"
             valido = False
 
-        if valido and not fecha_str:
+        # En Stand By la fecha de servicio sale de la fecha de inicio.
+        es_sb = es_standby(servicio)
+        if valido and not fecha_str and not es_sb:
             error = "Fecha es obligatoria (formato YYYY-MM-DD)"
             valido = False
-        elif valido and fecha_str:
+        elif valido and fecha_str and not es_sb:
             try:
                 date.fromisoformat(fecha_str)
             except ValueError:
@@ -878,7 +728,8 @@ async def preview_carga_masiva_viajes(
             error = "Placa es obligatoria"
             valido = False
 
-        if valido and tarifa_num is None:
+        tarifa_vacia = tarifa_raw is None or not str(tarifa_raw).strip()
+        if valido and tarifa_num is None and not (es_sb and tarifa_vacia):
             error = "Tarifa Tercero es obligatoria y debe ser un número"
             valido = False
         elif valido and tarifa_num is not None and tarifa_num <= 0:
@@ -893,6 +744,16 @@ async def preview_carga_masiva_viajes(
                 elif not destino:
                     error = "Destino es obligatorio para este tipo de servicio"
                     valido = False
+
+        standby = None
+        if valido and es_sb:
+            try:
+                standby = resolver_standby_carga_masiva(db, servicio, placa or "", inicio_raw, fin_raw, tarifa_num)
+                fecha_str = str(standby.inicio.date())
+                tarifa_num = standby.tarifa_tercero
+            except ValueError as exc:
+                error = str(exc)
+                valido = False
 
         # Validar manifiesto si se proporcionó
         if valido and manifiesto:
@@ -919,6 +780,9 @@ async def preview_carga_masiva_viajes(
                 tarifa_tercero=tarifa_num,
                 descripcion=descripcion,
                 manifiesto_numero=manifiesto,
+                fecha_hora_inicio=standby.inicio.isoformat(sep=" ", timespec="minutes") if standby else None,
+                fecha_hora_fin=standby.fin.isoformat(sep=" ", timespec="minutes") if standby else None,
+                horas_cantidad=standby.horas if standby else None,
                 valido=valido,
                 error=error,
             )
@@ -987,6 +851,8 @@ async def bulk_upload_viajes(
             destino = get_cell(row, "destino") or ""
             conductor = get_cell(row, "conductor")
             tarifa_raw = row[idx["tarifa_tercero"]] if "tarifa_tercero" in idx else None
+            inicio_raw = row[idx["fecha_hora_inicio"]] if "fecha_hora_inicio" in idx else None
+            fin_raw = row[idx["fecha_hora_fin"]] if "fecha_hora_fin" in idx else None
             descripcion = get_cell(row, "descripcion")
 
             placa = placa_raw.upper() if placa_raw else ""
@@ -995,24 +861,6 @@ async def bulk_upload_viajes(
 
             if not titulo:
                 raise ValueError("Título es obligatorio")
-            if fecha_raw is None:
-                raise ValueError("Fecha es obligatoria")
-
-            if isinstance(fecha_raw, datetime):
-                fecha_servicio = fecha_raw.date()
-            elif isinstance(fecha_raw, date):
-                fecha_servicio = fecha_raw
-            else:
-                fecha_servicio = date.fromisoformat(str(fecha_raw).strip())
-
-            if not placa:
-                raise ValueError("Placa es obligatoria")
-            if tarifa_raw is None:
-                raise ValueError("Tarifa Tercero es obligatoria")
-
-            tarifa_num = float(tarifa_raw)
-            if tarifa_num <= 0:
-                raise ValueError("Tarifa Tercero debe ser mayor a 0")
 
             # Resolver servicio — igual de estricto que la validacion previa
             # (preview_carga_masiva_viajes), para no cargar filas con un tipo
@@ -1025,6 +873,37 @@ async def bulk_upload_viajes(
                 raise ValueError(
                     f"Tipo Servicio '{tipo_servicio_raw}' no reconocido. Revisa la hoja 'Instrucciones' de la plantilla."
                 )
+
+            if not placa:
+                raise ValueError("Placa es obligatoria")
+
+            es_sb = es_standby(servicio)
+            tarifa_vacia = tarifa_raw is None or not str(tarifa_raw).strip()
+            tarifa_num: float | None = None
+            if not (es_sb and tarifa_vacia):
+                if tarifa_vacia:
+                    raise ValueError("Tarifa Tercero es obligatoria")
+                tarifa_num = float(tarifa_raw)
+                if tarifa_num <= 0:
+                    raise ValueError("Tarifa Tercero debe ser mayor a 0")
+
+            standby = None
+            if es_sb:
+                # La fecha de servicio de un Stand By es la de su inicio; el
+                # total sale de las fechas y la tarifa por hora (o del valor
+                # total que traiga el Excel).
+                standby = resolver_standby_carga_masiva(db, servicio, placa, inicio_raw, fin_raw, tarifa_num)
+                fecha_servicio = standby.inicio.date()
+                tarifa_num = standby.tarifa_tercero
+            else:
+                if fecha_raw is None:
+                    raise ValueError("Fecha es obligatoria")
+                if isinstance(fecha_raw, datetime):
+                    fecha_servicio = fecha_raw.date()
+                elif isinstance(fecha_raw, date):
+                    fecha_servicio = fecha_raw
+                else:
+                    fecha_servicio = date.fromisoformat(str(fecha_raw).strip())
 
             if servicio.requiere_origen_destino:
                 if not origen:
@@ -1047,7 +926,6 @@ async def bulk_upload_viajes(
                 seen_manifiestos_upload.add(manifiesto)
 
             tarifa_cliente, rentabilidad = calculate_tarifa_cliente(tarifa_num, operacion)
-            horas_cantidad = _horas_hora_extra_desde_valor(db, servicio, placa, tarifa_num)
 
             viaje = Viaje(
                 operacion_id=operacion_id,
@@ -1058,7 +936,11 @@ async def bulk_upload_viajes(
                 origen=origen,
                 destino=destino,
                 placa=placa,
-                horas_cantidad=horas_cantidad,
+                hora_inicio=standby.inicio.time() if standby else None,
+                hora_fin=standby.fin.time() if standby else None,
+                fecha_hora_inicio=standby.inicio if standby else None,
+                fecha_hora_fin=standby.fin if standby else None,
+                horas_cantidad=standby.horas if standby else None,
                 conductor=conductor or None,
                 tarifa_tercero=round(tarifa_num, 2),
                 tarifa_cliente=round(float(tarifa_cliente), 2),

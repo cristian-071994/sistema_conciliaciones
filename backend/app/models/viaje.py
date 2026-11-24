@@ -21,6 +21,10 @@ class Viaje(Base):
     placa: Mapped[str] = mapped_column(String(50), nullable=False)
     hora_inicio: Mapped[time | None] = mapped_column(Time, nullable=True)
     hora_fin: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # Stand By: rango completo (puede abarcar varios días). hora_inicio/hora_fin
+    # quedan como la parte "hora" del rango, por compatibilidad con el histórico.
+    fecha_hora_inicio: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fecha_hora_fin: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     horas_cantidad: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     conductor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     tarifa_tercero: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)

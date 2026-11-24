@@ -48,6 +48,40 @@ class ConciliacionItem(Base):
         return self.viaje.servicio.codigo
 
     @property
+    def _es_standby(self) -> bool:
+        from app.services.standby import es_standby
+
+        return bool(self.viaje and es_standby(self.viaje.servicio))
+
+    @property
+    def valor_hora_tercero(self) -> float | None:
+        from app.services.standby import valor_por_hora
+
+        return valor_por_hora(self.tarifa_tercero, self.horas_cantidad) if self._es_standby else None
+
+    @property
+    def valor_hora_cliente(self) -> float | None:
+        from app.services.standby import valor_por_hora
+
+        return valor_por_hora(self.tarifa_cliente, self.horas_cantidad) if self._es_standby else None
+
+    @property
+    def servicio_permite_adjuntos(self) -> bool:
+        return bool(self.viaje and self.viaje.servicio and self.viaje.servicio.permite_adjuntos)
+
+    @property
+    def adjuntos_count(self) -> int:
+        return int(getattr(self.viaje, "adjuntos_count", 0) or 0) if self.viaje else 0
+
+    @property
+    def fecha_hora_inicio(self) -> datetime | None:
+        return self.viaje.fecha_hora_inicio if self.viaje else None
+
+    @property
+    def fecha_hora_fin(self) -> datetime | None:
+        return self.viaje.fecha_hora_fin if self.viaje else None
+
+    @property
     def horas_cantidad(self) -> float | None:
         if not self.viaje:
             return None

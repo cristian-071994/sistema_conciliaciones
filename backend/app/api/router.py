@@ -1,11 +1,12 @@
 from fastapi import APIRouter
 
-from app.api.routes import auth, avansat, catalogs, conciliaciones, dashboard, notificaciones, presence, roles, servicios, tarifas, viajes, viajes_adicionales, vehiculos
+from app.api.routes import auth, avansat, catalogs, conciliaciones, dashboard, notificaciones, presence, roles, servicios, tarifas, viaje_adjuntos, viajes, viajes_adicionales, vehiculos
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(auth.router)
 api_router.include_router(catalogs.router)
 api_router.include_router(viajes.router)
+api_router.include_router(viaje_adjuntos.router)
 api_router.include_router(conciliaciones.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(avansat.router)

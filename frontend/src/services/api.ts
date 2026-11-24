@@ -1,4 +1,4 @@
-import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DashboardPlacaDetalle, DashboardPlacaGrupo, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, PaginaSolicitudesViajeAdicional, Permiso, Rol, RutaTarifa, Servicio, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
+import { AuthMessage, AvansatCacheListResult, AvansatCacheStats, AvansatLookup, AvansatSyncResult, CargaMasivaFilaPreview, CargaMasivaResultado, CatalogoTarifa, Cliente, Conciliacion, DashboardIndicators, DashboardPlacaDetalle, DashboardPlacaGrupo, DestinatarioSugerido, Item, LoginResponse, Notificacion, Operacion, PaginaSolicitudesViajeAdicional, Permiso, Rol, RutaTarifa, Servicio, ServicioAdjunto, SolicitudViajeAdicional, TarifaLookup, Tercero, TipoVehiculo, User, UsuarioPresence, Vehiculo, VehiculoDisponible, Viaje } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
@@ -234,7 +234,8 @@ export const api = {
     origen?: string;
     destino?: string;
     placa: string;
-    hora_inicio?: string;
+    fecha_hora_inicio?: string;
+    fecha_hora_fin?: string;
     conductor?: string;
     tarifa_tercero?: number;
     tarifa_cliente?: number;
@@ -264,6 +265,31 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  listarAdjuntosServicio: (viajeId: number) => request<ServicioAdjunto[]>(`/viajes/${viajeId}/adjuntos`),
+  subirAdjuntosServicio: async (viajeId: number, archivos: File[]): Promise<ServicioAdjunto[]> => {
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const form = new FormData();
+    archivos.forEach((archivo) => form.append("archivos", archivo));
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${API_URL}/viajes/${viajeId}/adjuntos`, { method: "POST", headers, body: form });
+    if (!response.ok) {
+      const raw = await response.text();
+      if (response.status === 401 && unauthorizedHandler) unauthorizedHandler();
+      throw new Error(raw || "No se pudieron subir los archivos");
+    }
+    return response.json() as Promise<ServicioAdjunto[]>;
+  },
+  descargarAdjuntoServicio: async (viajeId: number, adjuntoId: number): Promise<Blob> => {
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${API_URL}/viajes/${viajeId}/adjuntos/${adjuntoId}`, { headers });
+    if (!response.ok) throw new Error("No se pudo abrir el archivo");
+    return response.blob();
+  },
+  eliminarAdjuntoServicio: (viajeId: number, adjuntoId: number) =>
+    request<{ ok: boolean }>(`/viajes/${viajeId}/adjuntos/${adjuntoId}`, { method: "DELETE" }),
   inactivarViaje: (id: number) =>
     request<{ ok: boolean }>(`/viajes/${id}`, {
       method: "DELETE",
@@ -667,12 +693,12 @@ export const api = {
     return request<DashboardPlacaDetalle>(`/dashboard/placa-detalle?${search.toString()}`);
   },
   servicios: () => request<Servicio[]>("/servicios"),
-  crearServicio: (payload: { nombre: string; requiere_origen_destino?: boolean }) =>
+  crearServicio: (payload: { nombre: string; requiere_origen_destino?: boolean; permite_adjuntos?: boolean }) =>
     request<Servicio>("/servicios", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  editarServicio: (id: number, payload: { nombre?: string; requiere_origen_destino?: boolean }) =>
+  editarServicio: (id: number, payload: { nombre?: string; requiere_origen_destino?: boolean; permite_adjuntos?: boolean }) =>
     request<Servicio>(`/servicios/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
