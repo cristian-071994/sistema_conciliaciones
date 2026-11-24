@@ -3394,8 +3394,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                               fin={v.fecha_hora_fin}
                               valorHoraTercero={v.valor_hora_tercero}
                               valorHoraCliente={v.valor_hora_cliente}
-                              totalTercero={v.tarifa_tercero}
-                              totalCliente={v.tarifa_cliente}
                               className="text-[11px] font-normal text-neutral"
                             />
                           )}
@@ -3912,8 +3910,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                                           fin={item.fecha_hora_fin}
                                           valorHoraTercero={item.valor_hora_tercero}
                                           valorHoraCliente={item.valor_hora_cliente}
-                                          totalTercero={item.tarifa_tercero}
-                                          totalCliente={item.tarifa_cliente}
                                         />
                                       )}
                                       {item.servicio_permite_adjuntos && !!item.viaje_id && (
@@ -4667,8 +4663,6 @@ export function DashboardPage({ user, operaciones, conciliaciones, onRefreshConc
                               fin={item.fecha_hora_fin}
                               valorHoraTercero={item.valor_hora_tercero}
                               valorHoraCliente={item.valor_hora_cliente}
-                              totalTercero={item.tarifa_tercero}
-                              totalCliente={item.tarifa_cliente}
                             />
                           )}
                           {item.servicio_permite_adjuntos && !!item.viaje_id && (

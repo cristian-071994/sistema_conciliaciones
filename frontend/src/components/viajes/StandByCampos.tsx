@@ -93,11 +93,9 @@ interface StandByDetalleProps {
   horas?: number | null;
   inicio?: string | null;
   fin?: string | null;
-  /** Valor de la hora y total: el backend solo manda los que el rol puede ver. */
+  /** Valor de la hora: el backend solo manda el que el rol puede ver (el total ya está en las columnas de tarifa). */
   valorHoraTercero?: number | null;
   valorHoraCliente?: number | null;
-  totalTercero?: number | null;
-  totalCliente?: number | null;
   /** Versión de dos líneas para columnas estrechas (el rango queda en el tooltip). */
   compacto?: boolean;
   className?: string;
@@ -110,8 +108,6 @@ export function StandByDetalle({
   fin,
   valorHoraTercero,
   valorHoraCliente,
-  totalTercero,
-  totalCliente,
   compacto = false,
   className = "text-[11px] text-slate-500",
 }: StandByDetalleProps) {
@@ -128,7 +124,7 @@ export function StandByDetalle({
       </div>
     );
   }
-  const hayValores = [valorHoraTercero, valorHoraCliente, totalTercero, totalCliente].some(
+  const hayValores = [valorHoraTercero, valorHoraCliente].some(
     (valor) => valor !== null && valor !== undefined
   );
   return (
@@ -147,16 +143,6 @@ export function StandByDetalle({
           {valorHoraTercero != null && (
             <p>
               Valor hora tercero: <span className="font-semibold">{formatCOP(valorHoraTercero)}</span>
-            </p>
-          )}
-          {totalCliente != null && (
-            <p>
-              Total cliente: <span className="font-semibold">{formatCOP(totalCliente)}</span>
-            </p>
-          )}
-          {totalTercero != null && (
-            <p>
-              Total tercero: <span className="font-semibold">{formatCOP(totalTercero)}</span>
             </p>
           )}
         </div>
